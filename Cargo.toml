@@ -1,0 +1,19 @@
+[package]
+name = "methylation_phasing"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Error handling
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+noodles-bgzf = "0.43.0"
+noodles-core = "0.18.0"
+noodles-fastq = "*"
+noodles-bam = "*"
+noodles-sam = "*"
+bstr = "*"
+csv = "1.3"
+
+[dev-dependencies]
+tempfile = "3"
