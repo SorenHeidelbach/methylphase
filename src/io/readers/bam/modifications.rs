@@ -81,6 +81,10 @@ fn parse_modifications(
     sequence: &[u8],
     ml: Option<&[u8]>,
 ) -> Result<Vec<ModificationCall>> {
+    if sequence.is_empty() {
+        bail!("read sequence is missing (SEQ field was `*`); provide --sequence-fallback with the corresponding FASTQ/BAM");
+    }
+
     let segments = parse_segments(mm)?;
     let mut calls = Vec::new();
     let mut probability_index = 0;

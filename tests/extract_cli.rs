@@ -190,9 +190,10 @@ fn split_reads_imputes_missing_data() -> Result<()> {
 
     run(cli)?;
     let clustering = fs::read_to_string(out_dir.join("read_clustering.tsv"))?;
-    assert!(clustering.contains("0.5000"));
+    assert!(clustering.contains("GATC_6mA_1"));
+    assert!(!clustering.contains("CCWGG_5mC_1"));
     let raw_clustering = fs::read_to_string(out_dir.join("read_clustering_raw.tsv"))?;
-    assert!(raw_clustering.contains("NA"));
+    assert!(!raw_clustering.contains("NA"));
     Ok(())
 }
 

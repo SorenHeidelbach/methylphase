@@ -116,6 +116,17 @@ pub fn run(
     if reads.is_empty() {
         bail!("no reads matched motifs; nothing to cluster");
     }
+    let (raw_features, motif_names, dropped_features) =
+        retain_dense_features(raw_features, motif_names, 0.5)?;
+    if dropped_features > 0 {
+        eprintln!(
+            "split_reads: dropped {} motifs with insufficient coverage",
+            dropped_features
+        );
+    }
+    if motif_names.is_empty() {
+        bail!("all motifs were dropped after filtering for coverage");
+    }
     eprintln!(
         "Imputing feature matrix for {} reads and {} motifs...",
         reads.len(), motif_names.len()
@@ -615,41 +626,90 @@ fn encode_fastq_quality(qualities: &[u8], len: usize) -> String {
         .collect()
 }
 
+fn retain_dense_features(
+    rows: Vec<Vec<Option<f64>>>,
+    motif_names: Vec<String>,
+    max_missing_fraction: f64,
+) -> Result<(Vec<Vec<Option<f64>>>, Vec<String>, usize)> {
+    if rows.is_empty() || motif_names.is_empty() {
+        return Ok((rows, motif_names, 0));
+    }
+
+    let row_count = rows.len();
+    let mut keep = vec![true; motif_names.len()];
+    for col_idx in 0..motif_names.len() {
+        let missing = rows.iter().filter(|row| row[col_idx].is_none()).count();
+        if row_count > 0 && (missing as f64) / row_count as f64 > max_missing_fraction {
+            keep[col_idx] = false;
+        }
+    }
+
+    let dropped = keep.iter().filter(|flag| !**flag).count();
+    if dropped == 0 {
+        return Ok((rows, motif_names, 0));
+    }
+
+    let mut filtered_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut filtered = Vec::with_capacity(motif_names.len() - dropped);
+        for (idx, value) in row.into_iter().enumerate() {
+            if keep[idx] {
+                filtered.push(value);
+            }
+        }
+        filtered_rows.push(filtered);
+    }
+
+    let filtered_names = motif_names
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, name)| keep[idx].then_some(name))
+        .collect();
+
+    Ok((filtered_rows, filtered_names, dropped))
+}
+
 fn impute_features(rows: &[Vec<Option<f64>>]) -> Vec<Vec<f64>> {
     if rows.is_empty() {
         return Vec::new();
     }
 
     let motif_count = rows[0].len();
-    let mut column_means = vec![0.0; motif_count];
+    let mut data = rows.to_vec();
     let mut column_counts = vec![0usize; motif_count];
-    for row in rows {
+    let mut column_sums = vec![0.0f64; motif_count];
+    let mut missing_counts = vec![0usize; motif_count];
+    for row in &data {
         for (idx, value) in row.iter().enumerate() {
-            if let Some(v) = value {
-                column_means[idx] += *v;
-                column_counts[idx] += 1;
+            match value {
+                Some(v) => {
+                    column_sums[idx] += *v;
+                    column_counts[idx] += 1;
+                }
+                None => missing_counts[idx] += 1,
             }
         }
     }
-    for idx in 0..motif_count {
-        if column_counts[idx] > 0 {
-            column_means[idx] /= column_counts[idx] as f64;
+
+    let mut column_order: Vec<usize> = (0..motif_count).collect();
+    column_order.sort_by_key(|idx| missing_counts[*idx]);
+
+    for &col_idx in &column_order {
+        let mean = if column_counts[col_idx] > 0 {
+            column_sums[col_idx] / column_counts[col_idx] as f64
         } else {
-            column_means[idx] = 0.5;
+            0.5
+        };
+        for row_idx in 0..data.len() {
+            if data[row_idx][col_idx].is_none() {
+                let value = nearest_value(&data, row_idx, col_idx).unwrap_or(mean);
+                data[row_idx][col_idx] = Some(value);
+            }
         }
     }
 
-    rows.iter()
-        .enumerate()
-        .map(|(row_idx, row)| {
-            row.iter()
-                .enumerate()
-                .map(|(col_idx, value)| match value {
-                    Some(v) => *v,
-                    None => nearest_value(rows, row_idx, col_idx).unwrap_or(column_means[col_idx]),
-                })
-                .collect::<Vec<f64>>()
-        })
+    data.into_iter()
+        .map(|row| row.into_iter().map(|value| value.unwrap_or(0.5)).collect())
         .collect()
 }
 
@@ -729,5 +789,19 @@ mod tests {
         assert!(labels[0] != labels[2]);
     }
 
-
+    #[test]
+    fn retain_dense_features_filters_sparse_columns() {
+        let rows = vec![
+            vec![Some(0.1), None, Some(0.2)],
+            vec![Some(0.2), None, None],
+            vec![Some(0.3), None, Some(0.4)],
+            vec![Some(0.4), None, None],
+        ];
+        let motifs = vec!["A".into(), "B".into(), "C".into()];
+        let (filtered, names, dropped) =
+            retain_dense_features(rows, motifs, 0.5).unwrap();
+        assert_eq!(names, vec!["A", "C"]);
+        assert_eq!(filtered[0].len(), 2);
+        assert_eq!(dropped, 1);
+    }
 }

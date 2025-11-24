@@ -63,11 +63,11 @@ pub enum Command {
         #[arg(long = "fastq-dir", value_name = "DIR")]
         fastq_dir: Option<PathBuf>,
 
-        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ.
+        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ (indexes stored as <fallback>.fqidx/.bai).
         #[arg(long = "sequence-fallback", value_name = "FILE")]
         sequence_fallback: Option<PathBuf>,
 
-        /// Optional index (e.g., fqidx) enabling random access to the sequence fallback FASTQ.
+        /// Optional override for the fallback index path (defaults to <fallback>.fqidx/.bai).
         #[arg(long = "sequence-index", value_name = "FILE")]
         sequence_index: Option<PathBuf>,
 
@@ -116,11 +116,11 @@ pub enum Command {
         #[arg(long = "methylation-threshold", default_value_t = 0.5)]
         methylation_threshold: f32,
 
-        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ.
+        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ (indexes stored as <fallback>.fqidx/.bai).
         #[arg(long = "sequence-fallback", value_name = "FILE")]
         sequence_fallback: Option<PathBuf>,
 
-        /// Optional index (e.g., fqidx) enabling random access to the sequence fallback FASTQ.
+        /// Optional override for the fallback index path (defaults to <fallback>.fqidx/.bai).
         #[arg(long = "sequence-index", value_name = "FILE")]
         sequence_index: Option<PathBuf>,
 
@@ -153,11 +153,11 @@ pub enum Command {
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
-        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ.
+        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ (indexes stored as <fallback>.fqidx/.bai).
         #[arg(long = "sequence-fallback", value_name = "FILE")]
         sequence_fallback: Option<PathBuf>,
 
-        /// Optional index (e.g., fqidx) enabling random access to the sequence fallback FASTQ.
+        /// Optional override for the fallback index path (defaults to <fallback>.fqidx/.bai).
         #[arg(long = "sequence-index", value_name = "FILE")]
         sequence_index: Option<PathBuf>,
 
@@ -210,11 +210,11 @@ pub enum Command {
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
-        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ.
+        /// Optional FASTQ/BAM providing sequences for reads whose BAM entries omit SEQ (indexes stored as <fallback>.fqidx/.bai).
         #[arg(long = "sequence-fallback", value_name = "FILE")]
         sequence_fallback: Option<PathBuf>,
 
-        /// Optional index (e.g., fqidx) enabling random access to the sequence fallback FASTQ.
+        /// Optional override for the fallback index path (defaults to <fallback>.fqidx/.bai).
         #[arg(long = "sequence-index", value_name = "FILE")]
         sequence_index: Option<PathBuf>,
 

@@ -98,7 +98,7 @@ ggplot(aggregate_reads_wide) +
 
 
 
-temp <- fread("//wsl$/nix/home/shei/methylation_phasing/development/methylation_phasing/ZymoFecal_bin2.474_contig_1330_split/read_clustering_raw.tsv")
+temp <- fread("//wsl$/nix/home/shei/methylation_phasing/development/methylation_phasing/results/Escherichia-coli_DSMZ18039_split/read_clustering_raw.tsv")
 ggplot(temp) +
   aes(
     x = TGATC_6mA_3,
@@ -107,12 +107,11 @@ ggplot(temp) +
   ) +
   geom_point()
 
-y_order <- hclust(dist(temp %>% select(-c("read_id", "cluster_id"))) )$order
 
 
 plot_raw <- temp  %>% pivot_longer(cols = -c("read_id", "cluster_id"))  %>%
   mutate(
-    read_id = factor(read_id, levels = temp$read_id[y_order])
+    read_id = factor(read_id)
   ) %>% 
   ggplot() +
   aes(
@@ -140,7 +139,7 @@ plot_raw <- temp  %>% pivot_longer(cols = -c("read_id", "cluster_id"))  %>%
     title = "Raw"
   )
 
-temp <- fread("//wsl$/nix//home/shei/methylation_phasing/development/methylation_phasing/Escherichia-coli_DSMZ18039_split/read_clustering.tsv")
+temp <- fread("//wsl$/nix//home/shei/methylation_phasing/development/methylation_phasing/results/Escherichia-coli_DSMZ18039_split/read_clustering.tsv")
 ggplot(temp) +
   aes(
     x = GATC_6mA_1,
