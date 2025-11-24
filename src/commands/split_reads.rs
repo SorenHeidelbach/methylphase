@@ -562,7 +562,7 @@ fn auto_hdbscan_min_samples(read_count: usize) -> usize {
     if read_count == 0 {
         return minimum;
     }
-    ((read_count as f64 / 100.0).ceil() as usize).max(minimum)
+    ((read_count as f64 / 10.0).ceil() as usize).max(minimum)
 }
 
 fn process_reads_parallel<S>(
