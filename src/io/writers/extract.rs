@@ -1,7 +1,6 @@
 use crate::core::MotifQuery;
 use crate::features::extract::{
-    AggregateRecord, ExtractionSink, FastqRecord, MotifSummaryRecord, PerReadRecord,
-    QUANTILE_PCTS,
+    AggregateRecord, ExtractionSink, FastqRecord, MotifSummaryRecord, PerReadRecord, QUANTILE_PCTS,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -17,6 +16,8 @@ pub struct ExtractionWriter {
     motif_summary: Option<BufWriter<File>>,
     fastq_dir: Option<PathBuf>,
     fastq_writers: HashMap<String, BufWriter<File>>,
+    per_read_count: usize,
+    aggregate_count: usize,
 }
 
 impl ExtractionWriter {
@@ -67,6 +68,8 @@ impl ExtractionWriter {
             motif_summary,
             fastq_dir,
             fastq_writers: HashMap::new(),
+            per_read_count: 0,
+            aggregate_count: 0,
         };
 
         writer.write_headers()?;
@@ -76,7 +79,7 @@ impl ExtractionWriter {
     fn write_headers(&mut self) -> Result<()> {
         writeln!(
             self.per_read,
-            "read_id\tcontig\tstrand\tmotif\tmotif_start\tmotif_position\tread_position\tref_position\tprobability\tmod_label"
+            "read_id\tcontig\tstrand\tmotif\tmotif_start\tmotif_position\tread_position\tref_position\tprobability\tmethylated\tmod_label"
         )?;
         write!(
             self.aggregate,
@@ -118,10 +121,11 @@ impl ExtractionSink for ExtractionWriter {
             .probability
             .map(|p| format!("{:.4}", p))
             .unwrap_or_else(|| "NA".to_string());
+        let methylated = if record.methylated { "1" } else { "0" };
 
         writeln!(
             self.per_read,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             record.read_id,
             contig,
             strand,
@@ -131,8 +135,13 @@ impl ExtractionSink for ExtractionWriter {
             record.read_position,
             ref_position,
             probability,
+            methylated,
             record.mod_label,
         )?;
+        self.per_read_count += 1;
+        if self.per_read_count % 10_000 == 0 {
+            self.per_read.flush()?;
+        }
 
         Ok(())
     }
@@ -158,6 +167,10 @@ impl ExtractionSink for ExtractionWriter {
             write!(self.aggregate, "\t{}", value)?;
         }
         writeln!(self.aggregate)?;
+        self.aggregate_count += 1;
+        if self.aggregate_count % 10_000 == 0 {
+            self.aggregate.flush()?;
+        }
 
         Ok(())
     }

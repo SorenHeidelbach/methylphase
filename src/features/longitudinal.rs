@@ -274,11 +274,11 @@ mod tests {
     #[test]
     fn aggregates_read_patterns_per_block() {
         let mut analyzer = LongitudinalAnalyzer::new(1000);
-        analyzer.record_call("ctg", 10, "GATC_6mA_2", "read1", true);
-        analyzer.record_call("ctg", 20, "GATC_6mA_2", "read1", true);
-        analyzer.record_call("ctg", 10, "GATC_6mA_2", "read2", false);
-        analyzer.record_call("ctg", 20, "GATC_6mA_2", "read2", false);
-        analyzer.record_call("ctg", 20, "GATC_6mA_2", "read3", true);
+        analyzer.record_call("ctg", 10, "GATC_6mA_1", "read1", true);
+        analyzer.record_call("ctg", 20, "GATC_6mA_1", "read1", true);
+        analyzer.record_call("ctg", 10, "GATC_6mA_1", "read2", false);
+        analyzer.record_call("ctg", 20, "GATC_6mA_1", "read2", false);
+        analyzer.record_call("ctg", 20, "GATC_6mA_1", "read3", true);
 
         let results = analyzer.finish();
         assert_eq!(results.len(), 1);
@@ -314,10 +314,10 @@ mod tests {
     #[test]
     fn polarization_reflects_uniform_reads() {
         let mut analyzer = LongitudinalAnalyzer::new(1000);
-        analyzer.record_call("ctg", 10, "GATC_6mA_2", "read1", true);
-        analyzer.record_call("ctg", 20, "GATC_6mA_2", "read1", false);
-        analyzer.record_call("ctg", 10, "GATC_6mA_2", "read2", false);
-        analyzer.record_call("ctg", 20, "GATC_6mA_2", "read2", true);
+        analyzer.record_call("ctg", 10, "GATC_6mA_1", "read1", true);
+        analyzer.record_call("ctg", 20, "GATC_6mA_1", "read1", false);
+        analyzer.record_call("ctg", 10, "GATC_6mA_1", "read2", false);
+        analyzer.record_call("ctg", 20, "GATC_6mA_1", "read2", true);
 
         let results = analyzer.finish();
         let block = &results[0];

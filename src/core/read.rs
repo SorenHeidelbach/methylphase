@@ -64,6 +64,7 @@ impl ReadRecord {
 pub struct ModificationCall {
     pub position: usize,
     pub probability: Option<f32>,
+    pub methylated: bool,
     pub kind: ModificationKind,
 }
 

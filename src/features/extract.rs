@@ -43,74 +43,90 @@ impl<S: ExtractionSink> Extractor<S> {
     }
 
     pub fn process_read(&mut self, read: &ReadRecord) -> Result<()> {
-        let mut per_read_stats: HashMap<&str, MotifStats> = HashMap::new();
-        let mut motif_hits = vec![false; self.motifs.len()];
-
-        for (idx, motif) in self.motifs.iter().enumerate() {
-            let motif_name = motif.raw();
-            let motif_position = motif.mod_position();
-            let mod_label = motif.mod_label();
-            let motif_offset = motif.mod_position() - 1;
-            let matches = motif.matches(read.sequence());
-
-            for start in matches {
-                let mod_pos = start + motif_offset;
-                let Some(call) = read.modification_at(mod_pos, mod_label) else {
-                    continue;
-                };
-
-                motif_hits[idx] = true;
-                self.sink.record_per_read(PerReadRecord {
-                    read_id: &read.id,
-                    contig: read.contig_name(),
-                    strand: read.strand,
-                    motif_name,
-                    motif_start: start,
-                    motif_position,
-                    read_position: mod_pos,
-                    reference_position: read.reference_position(mod_pos),
-                    probability: call.probability,
-                    mod_label: &call.kind.label,
-                })?;
-
-                per_read_stats
-                    .entry(motif_name)
-                    .or_default()
-                    .observe(call.probability);
-            }
-        }
-
-        for (motif_name, stats) in per_read_stats {
-            self.sink.record_aggregate(AggregateRecord {
-                read_id: &read.id,
-                motif_name,
-                call_count: stats.count,
-                mean_probability: stats.mean_probability(),
-                quantiles: stats.quantiles(),
-            })?;
-        }
-
-        self.sink.record_motif_summary(MotifSummaryRecord {
-            read_id: &read.id,
-            contig: read.contig_name(),
-            hits: &motif_hits,
-        })?;
-
-        let (combo_label, file_key) = motif_combo_key(&motif_hits, &self.motifs);
-        self.sink.record_fastq(FastqRecord {
-            read_id: &read.id,
-            combo_label: &combo_label,
-            file_key: &file_key,
-            sequence: read.sequence(),
-            qualities: read.quality_scores(),
-        })?;
-
-        Ok(())
+        process_read_with_motifs(read, &self.motifs, &mut self.sink)
     }
 
     pub fn finish(mut self) -> Result<()> {
         self.sink.finish()
     }
+
+    pub fn finish_with_sink(mut self) -> Result<S> {
+        self.sink.finish()?;
+        Ok(self.sink)
+    }
+}
+
+pub fn process_read_with_motifs<S: ExtractionSink>(
+    read: &ReadRecord,
+    motifs: &[MotifQuery],
+    sink: &mut S,
+) -> Result<()> {
+    let mut per_read_stats: HashMap<&str, MotifStats> = HashMap::new();
+    let mut motif_hits = vec![false; motifs.len()];
+
+    for (idx, motif) in motifs.iter().enumerate() {
+        let motif_name = motif.raw();
+        let motif_position = motif.mod_position();
+        let mod_label = motif.mod_label();
+        let motif_offset = motif.mod_position();
+        let matches = motif.matches(read.sequence());
+
+        for start in matches {
+            let mod_pos = start + motif_offset;
+            let Some(call) = read.modification_at(mod_pos, mod_label) else {
+                continue;
+            };
+
+            if call.methylated {
+                motif_hits[idx] = true;
+            }
+            sink.record_per_read(PerReadRecord {
+                read_id: &read.id,
+                contig: read.contig_name(),
+                strand: read.strand,
+                motif_name,
+                motif_start: start,
+                motif_position,
+                read_position: mod_pos,
+                reference_position: read.reference_position(mod_pos),
+                probability: call.probability,
+                methylated: call.methylated,
+                mod_label: &call.kind.label,
+            })?;
+
+            per_read_stats
+                .entry(motif_name)
+                .or_default()
+                .observe(call.probability);
+        }
+    }
+
+    for (motif_name, stats) in per_read_stats {
+        sink.record_aggregate(AggregateRecord {
+            read_id: &read.id,
+            motif_name,
+            call_count: stats.count,
+            mean_probability: stats.mean_probability(),
+            quantiles: stats.quantiles(),
+        })?;
+    }
+
+    sink.record_motif_summary(MotifSummaryRecord {
+        read_id: &read.id,
+        contig: read.contig_name(),
+        hits: &motif_hits,
+    })?;
+
+    let (combo_label, file_key) = motif_combo_key(&motif_hits, motifs);
+    sink.record_fastq(FastqRecord {
+        read_id: &read.id,
+        combo_label: &combo_label,
+        file_key: &file_key,
+        sequence: read.sequence(),
+        qualities: read.quality_scores(),
+    })?;
+
+    Ok(())
 }
 
 #[derive(Default)]
@@ -130,7 +146,8 @@ impl MotifStats {
     }
 
     fn mean_probability(&self) -> Option<f64> {
-        (!self.probabilities.is_empty()).then_some(self.probability_sum / self.probabilities.len() as f64)
+        (!self.probabilities.is_empty())
+            .then_some(self.probability_sum / self.probabilities.len() as f64)
     }
 
     fn quantiles(&self) -> Option<[f64; QUANTILE_COUNT]> {
@@ -159,6 +176,7 @@ pub struct PerReadRecord<'a> {
     pub read_position: usize,
     pub reference_position: Option<i64>,
     pub probability: Option<f32>,
+    pub methylated: bool,
     pub mod_label: &'a str,
 }
 

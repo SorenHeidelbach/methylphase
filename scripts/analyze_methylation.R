@@ -14,9 +14,9 @@ suppressPackageStartupMessages({
 args <- commandArgs(trailingOnly = TRUE)
 if (interactive() & length(args) == 0) {
   args <- c(
-    "../development/methylation_phasing/results_ec/per_read.tsv",
-    "../development/methylation_phasing/results_ec/aggregate.tsv",
-    "output_ecoli"
+    "../development/methylation_phasing/ZymoFecal_bin2.474_contig_1330_split/per_red.tsv",
+    "../development/methylation_phasing/ZymoFecal_bin2.474_contig_1330_split/aggregate.tsv",
+    "output_ZymoFecal_bin2.474_contig_1330"
   )
 }
 
@@ -41,6 +41,7 @@ load_per_reads <- function(path) {
       read_position = col_double(),
       ref_position = col_character(),
       probability = col_character(),
+      methylated = col_character(),
       mod_label = col_character()
     )
   ) %>%
@@ -112,9 +113,9 @@ per_read_hist <- aggregate_reads %>%
       call_count <= 20 ~ "11-20",
       call_count > 20 ~ ">20"
     )
-  )
-  ggplot(aes(mean_probability)) +
-  geom_histogram(binwidth = 0.05, fill = "#4daf4a", alpha = 0.8) +
+  ) %>% 
+  ggplot(aes(mean_probability, fill = sites)) +
+  geom_histogram(binwidth = 0.05, alpha = 0.8) +
   facet_wrap(~motif, scales = "free_y") +
   labs(
     title = "Per-read mean methylation probability",
@@ -186,7 +187,7 @@ save_plot(read_contingency_plot, "per_read_contingency.png", width = 9, height =
 # Reference chunk distribution ------------------------------------------------------------------
 max_ref <- suppressWarnings(max(per_reads$ref_position, na.rm = TRUE))
 chunk_size <- if (is.finite(max_ref) && max_ref > 0) {
-  max(10000, round(max_ref / 20, -3))
+  max(3000, round(max_ref / 25, -3))
 } else {
   10000
 }
@@ -200,9 +201,14 @@ chunk_plot <- per_reads %>%
       levels = glue("{sort(unique(chunk)) / 1000}-{(sort(unique(chunk)) + chunk_size) / 1000} kb")
     )
   ) %>%
-  ggplot(aes(x = chunk_label, y = probability, fill = motif)) +
-  geom_boxplot(outlier.alpha = 0.2, outlier.size = 0.5) +
-  facet_wrap(~contig, scales = "free_x") +
+  ggplot(aes(x = chunk_label, y = probability, fill = motif, gorup = motif)) +
+  #geom_boxplot(outlier.alpha = 0.2, outlier.size = 0.5) +
+  geom_violin(
+    scale = "width", 
+    draw_quantiles = c(0.25, 0.5, 0.75), 
+    quantile.linewidth = c(1, 2, 1)/2,
+    quantile.colour = c("gray30", "gray0", "gray30")) +
+  facet_grid(strand ~contig, scales = "free_x") +
   labs(
     title = glue("Per-site methylation across {chunk_size/1000} kb reference chunks"),
     x = "Reference chunk",
@@ -211,9 +217,43 @@ chunk_plot <- per_reads %>%
   ) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
+chunk_plot
 save_plot(chunk_plot, "chunk_methylation_boxplot.png", width = 12, height = 6)
 
+
+
+chunk_aggregate_plot <- per_reads %>%
+  filter(!is.na(probability), !is.na(ref_position)) %>%
+  mutate(
+    chunk = floor(ref_position / chunk_size) * chunk_size,
+    chunk_label = factor(
+      glue("{chunk / 1000}-{(chunk + chunk_size) / 1000} kb"),
+      levels = glue("{sort(unique(chunk)) / 1000}-{(sort(unique(chunk)) + chunk_size) / 1000} kb")
+    )
+  ) %>%
+  group_by(
+    chunk, contig, chunk_label, motif
+  ) %>% 
+  summarise(
+    quantiles = quantile(probability, c(c(1, 2.5, 5, 7.5, 9)/10)),
+    quantile_lab = as.factor(c(1, 2.5, 5, 7.5, 9)/10)
+  ) %>% 
+  ggplot(aes(x = chunk_label, y = quantiles, fill = quantile_lab, group = quantile_lab, color = quantile_lab )) +
+  geom_line(aes(col = quantile_lab)) +
+  geom_point(size = 5) +
+  facet_wrap(motif~contig, scales = "free_x") +
+  labs(
+    title = glue("Per-site methylation across {chunk_size/1000} kb reference chunks"),
+    x = "Reference chunk",
+    y = "Probability",
+    fill = "Motif"
+  ) +
+  scale_color_viridis_d(direction = 1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+chunk_aggregate_plot
+save_plot(chunk_aggregate_plot, "chunk_methylation_quantile_plot.png", width = 12, height = 6)
 # Pairwise motif relationships ------------------------------------------------------------------
 generate_pair_plots <- function(agg_df, limit = 3) {
   motifs <- agg_df %>%
@@ -249,6 +289,8 @@ generate_pair_plots <- function(agg_df, limit = 3) {
       geom_density_2d_filled(alpha = 0.3) +
       geom_xsidedensity(fill = "#984ea3", alpha = 0.3) +
       geom_ysidedensity(fill = "#984ea3", alpha = 0.3) +
+      scale_x_continuous(limits = c(0, 1)) +
+      scale_y_continuous(limits = c(0, 1)) +
       theme_minimal() +
       labs(
         title = glue("Mean methylation relationship: {x_col} vs {y_col}"),
@@ -270,6 +312,7 @@ sanitize <- function(label) {
 plots <- generate_pair_plots(aggregate_reads, limit = 4)
 
 cat(glue("Analysis complete.\nOutputs written to {out_dir}\n"))
+
 
 
 

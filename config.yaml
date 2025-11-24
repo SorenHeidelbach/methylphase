@@ -1,0 +1,19 @@
+results_dir: results
+env:
+  floria_bin: /home/shei/.conda/envs/floria/bin
+defaults:
+  impute_threshold: 0.7
+  ploidy: 2
+  modkit_threads: 3
+  nanomotif_threads: 3
+samples:
+  ZymoFecal_bin2.474_contig_1330:
+    bam: /home/shei/methylation_phasing/methylation_phasing_data/ZymoFecal/ZemoFecal_contig_1330.bam
+    reference: /home/shei/methylation_phasing/methylation_phasing_data/ZymoFecal/ZymoFecal_contig_1330.fasta
+    contig_bins: config/contig_bins/ZymoFecal_contig_1330.tsv
+    contig: contig_1330
+  # Escherichia_coli_mixed_50-50:
+  #   bam: /home/shei/methylation_phasing/methylation_phasing_data/ecoli_mergin/merged.sorted.bam
+  #   reference: /home/shei/methylation_phasing/methylation_phasing_data/Escherichia-coli_DSMZ18039/flye/assembly.fasta
+  #   contig_bins: config/contig_bins/Escherichia_coli_mixed_50-50.tsv
+  #   contig: contig_3

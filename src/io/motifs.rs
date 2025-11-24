@@ -28,6 +28,15 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
         .ok_or_else(|| anyhow::anyhow!("mod_type column missing in {}", path.display()))?;
     let mod_position_idx = find_column(&headers, "mod_position")
         .ok_or_else(|| anyhow::anyhow!("mod_position column missing in {}", path.display()))?;
+    let motif_comp_idx = find_column(&headers, "motif_complement");
+    let mod_pos_comp_idx = find_column(&headers, "mod_position_complement");
+
+    if motif_comp_idx.is_some() ^ mod_pos_comp_idx.is_some() {
+        bail!(
+            "motif_complement and mod_position_complement columns must both be present in {}",
+            path.display()
+        );
+    }
 
     let mut specs = Vec::new();
     for record in reader.records() {
@@ -39,6 +48,7 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow::anyhow!("row missing motif value"))?;
+        let motif_len = motif.chars().count();
 
         let mod_label = record
             .get(mod_type_idx)
@@ -60,8 +70,52 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
                 path.display()
             )
         })?;
+        if mod_position >= motif_len {
+            bail!(
+                "mod_position {} exceeds motif length {} in {}",
+                mod_position,
+                motif_len,
+                path.display()
+            );
+        }
 
-        specs.push(format!("{}_{}_{}", motif, mod_label, mod_position));
+        let spec = format!("{}_{}_{}", motif, mod_label, mod_position);
+        specs.push(spec.clone());
+
+        if let (Some(motif_idx), Some(pos_idx)) = (motif_comp_idx, mod_pos_comp_idx) {
+            let comp_motif = record
+                .get(motif_idx)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let comp_position = record
+                .get(pos_idx)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+
+            if let (Some(comp_motif), Some(comp_position)) = (comp_motif, comp_position) {
+                let position: usize = comp_position.parse().with_context(|| {
+                    format!(
+                        "invalid mod_position_complement value `{}` in {}",
+                        comp_position,
+                        path.display()
+                    )
+                })?;
+                let comp_len = comp_motif.chars().count();
+                if position >= comp_len {
+                    bail!(
+                        "mod_position_complement {} exceeds motif length {} in {}",
+                        position,
+                        comp_len,
+                        path.display()
+                    );
+                }
+                let comp_spec = format!("{}_{}_{}", comp_motif, mod_label, position);
+                if comp_spec != spec {
+                    specs.push(comp_spec);
+                }
+            }
+        }
     }
 
     if specs.is_empty() {
@@ -139,13 +193,35 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
-            "motif\tmod_type\tmod_position\nGATC\t6mA\t2\nCCWGG\tm\t1"
+            "motif\tmod_type\tmod_position\nGATC\t6mA\t1\nCCWGG\tm\t0"
         )
         .unwrap();
         let specs = load_motif_file(file.path()).unwrap();
         assert_eq!(
             specs,
-            vec!["GATC_6mA_2".to_string(), "CCWGG_5mC_1".to_string()]
+            vec!["GATC_6mA_1".to_string(), "CCWGG_5mC_0".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_load_motif_file_with_complements() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "motif\tmod_type\tmod_position\tmotif_complement\tmod_position_complement\n\
+             GATC\t6mA\t1\tGATC\t2\n\
+             CCWGG\tm\t0\tCCWGG\t4"
+        )
+        .unwrap();
+        let specs = load_motif_file(file.path()).unwrap();
+        assert_eq!(
+            specs,
+            vec![
+                "GATC_6mA_1".to_string(),
+                "GATC_6mA_2".to_string(),
+                "CCWGG_5mC_0".to_string(),
+                "CCWGG_5mC_4".to_string(),
+            ]
         );
     }
 }

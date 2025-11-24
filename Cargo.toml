@@ -1,6 +1,6 @@
 [package]
 name = "methylation_phasing"
-version = "0.1.0"
+version = "0.2.3"
 edition = "2021"
 
 [dependencies]
@@ -9,11 +9,13 @@ anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 noodles-bgzf = "0.43.0"
 noodles-core = "0.18.0"
-noodles-fastq = "*"
-noodles-bam = "*"
-noodles-sam = "*"
-bstr = "*"
+noodles-fastq = "0.21.0"
+noodles-bam = "0.83.0"
+noodles-sam = "0.79.0"
+bstr = "1.7"
 csv = "1.3"
+hdbscan = "0.4"
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

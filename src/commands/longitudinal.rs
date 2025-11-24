@@ -2,11 +2,11 @@ use crate::{
     commands::shared,
     core::{MotifQuery, ReadRecord},
     features::longitudinal::{BlockResult, LongitudinalAnalyzer},
-    io::{BamReader, BamRecordDecoder},
+    io::{BamReader, BamRecordDecoder, SequenceCache},
 };
 use anyhow::{bail, Context, Result};
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{BufWriter, Write},
     path::PathBuf,
 };
@@ -15,9 +15,11 @@ pub fn run(
     bam: PathBuf,
     motifs: Vec<String>,
     motif_file: Option<PathBuf>,
-    output: PathBuf,
     block_size: usize,
     methylation_threshold: f32,
+    sequence_fallback: Option<PathBuf>,
+    sequence_index: Option<PathBuf>,
+    output_dir: PathBuf,
     contigs: Vec<String>,
 ) -> Result<()> {
     if block_size == 0 {
@@ -25,29 +27,57 @@ pub fn run(
     }
 
     let motif_queries = shared::load_motif_queries(motifs, motif_file)?;
+    let motif_count = motif_queries.len();
     let block_size_bp = i64::try_from(block_size).context("block size exceeds i64 range")?;
     let mut analyzer = LongitudinalAnalyzer::new(block_size_bp);
 
     let mut reader =
         BamReader::open(&bam).with_context(|| format!("failed to open BAM {}", bam.display()))?;
-    let decoder = BamRecordDecoder::new(reader.header());
+    let sequence_cache = sequence_fallback
+        .as_ref()
+        .map(|path| {
+            SequenceCache::from_path(path, sequence_index.as_deref())
+                .with_context(|| format!("failed to load sequence fallback {}", path.display()))
+        })
+        .transpose()?
+        .map(std::sync::Arc::new);
+    let decoder = BamRecordDecoder::new(reader.header(), sequence_cache);
 
     let contig_filter = if contigs.is_empty() {
         None
     } else {
         Some(contigs)
     };
+    eprintln!(
+        "longitudinal: processing BAM {} with {} motifs",
+        bam.display(),
+        motif_count
+    );
 
+    let mut processed_reads = 0usize;
     reader.visit_records(contig_filter.as_ref().map(|c| c.as_slice()), |record| {
         let read = decoder.decode(record)?;
         process_read(&read, &motif_queries, methylation_threshold, &mut analyzer);
+        processed_reads += 1;
+        if processed_reads % 1_000 == 0 {
+            eprintln!("longitudinal: processed {} reads...", processed_reads);
+        }
         Ok(())
     })?;
 
     decoder.report();
     let results = analyzer.finish();
-    write_results(&results, &output)?;
-
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create {}", output_dir.display()))?;
+    eprintln!(
+        "longitudinal: processed {} reads across {} motifs; writing {}",
+        processed_reads,
+        motif_count,
+        output_dir.display()
+    );
+    let output_path = output_dir.join("longitudinal.tsv");
+    write_results(&results, &output_path)?;
+    eprintln!("longitudinal: finished, wrote {}", output_path.display());
     Ok(())
 }
 
@@ -62,7 +92,7 @@ fn process_read(
     };
 
     for motif in motifs {
-        let motif_offset = motif.mod_position() - 1;
+        let motif_offset = motif.mod_position();
         let matches = motif.matches(read.sequence());
         for start in matches {
             let mod_pos = start + motif_offset;
@@ -71,7 +101,13 @@ fn process_read(
             };
             let state = read
                 .modification_at(mod_pos, motif.mod_label())
-                .map(|call| call.probability.map(|p| p >= threshold).unwrap_or(true))
+                .map(|call| {
+                    if !call.methylated {
+                        false
+                    } else {
+                        call.probability.map(|p| p >= threshold).unwrap_or(true)
+                    }
+                })
                 .unwrap_or(false);
             analyzer.record_call(contig, ref_pos, motif.raw(), &read.id, state);
         }

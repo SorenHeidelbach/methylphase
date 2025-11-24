@@ -1,11 +1,11 @@
 use crate::core::{ReadRecord, Strand};
-use crate::io::readers::bam::modifications;
+use crate::io::{readers::bam::modifications, SequenceCache};
 use anyhow::{Context, Result};
 use bstr::ByteSlice;
 use noodles_bam as bam;
 use noodles_sam::alignment::record::cigar::op::Kind as CigarKind;
 use noodles_sam::{self as sam};
-use std::cell::Cell;
+use std::{cell::Cell, sync::Arc};
 
 const MAX_WARNINGS: usize = 20;
 
@@ -14,10 +14,11 @@ const MAX_WARNINGS: usize = 20;
 pub struct BamRecordDecoder {
     reference_names: Vec<String>,
     parse_failures: Cell<usize>,
+    sequence_cache: Option<Arc<SequenceCache>>,
 }
 
 impl BamRecordDecoder {
-    pub fn new(header: &sam::Header) -> Self {
+    pub fn new(header: &sam::Header, sequence_cache: Option<Arc<SequenceCache>>) -> Self {
         let reference_names = header
             .reference_sequences()
             .iter()
@@ -27,6 +28,7 @@ impl BamRecordDecoder {
         Self {
             reference_names,
             parse_failures: Cell::new(0),
+            sequence_cache,
         }
     }
 
@@ -52,9 +54,16 @@ impl BamRecordDecoder {
             Some(Strand::Forward)
         };
 
-        let sequence: Vec<u8> = record.sequence().iter().collect();
+        let mut sequence: Vec<u8> = record.sequence().iter().collect();
+        if sequence.is_empty() {
+            if let Some(cache) = &self.sequence_cache {
+                if let Some(fallback) = cache.sequence(&read_id) {
+                    sequence = fallback;
+                }
+            }
+        }
         let quality_scores = record.quality_scores().as_ref().to_vec();
-        let reference_positions = map_read_to_reference(&record)?;
+        let reference_positions = map_read_to_reference(&record, sequence.len())?;
         let modifications = match modifications::extract(&record) {
             Ok(calls) => calls,
             Err(err) => {
@@ -99,8 +108,7 @@ impl BamRecordDecoder {
     }
 }
 
-fn map_read_to_reference(record: &bam::Record) -> Result<Vec<Option<i64>>> {
-    let read_len = record.sequence().len();
+fn map_read_to_reference(record: &bam::Record, read_len: usize) -> Result<Vec<Option<i64>>> {
     let mut mapping = vec![None; read_len];
 
     let Some(start) = record.alignment_start().transpose()? else {

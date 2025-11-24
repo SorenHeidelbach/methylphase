@@ -15,5 +15,11 @@ pub fn load_motif_queries(
         bail!("no motifs provided; use --motif or --motif-file");
     }
 
+    eprintln!(
+        "methylation_phasing: loaded {} motif(s): {}",
+        motifs.len(),
+        motifs.join(",")
+    );
+
     motifs.iter().map(|spec| MotifQuery::parse(spec)).collect()
 }

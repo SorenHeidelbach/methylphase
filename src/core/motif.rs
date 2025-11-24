@@ -25,10 +25,10 @@ impl MotifQuery {
         let mod_position: usize = parts[2]
             .parse()
             .with_context(|| format!("invalid modification index in `{spec}`"))?;
-        if mod_position == 0 || mod_position > motif.len() {
+        if mod_position >= motif.len() {
             bail!(
-                "modification index must be within motif bounds (1..={}), got {}",
-                motif.len(),
+                "modification index must be within motif bounds (0..{}), got {}",
+                motif.len() - 1,
                 mod_position
             );
         }
@@ -45,7 +45,7 @@ impl MotifQuery {
             pattern: motif.into_bytes(),
             masks,
             mod_label,
-            mod_index: mod_position - 1,
+            mod_index: mod_position,
         })
     }
 
@@ -62,7 +62,7 @@ impl MotifQuery {
     }
 
     pub fn mod_position(&self) -> usize {
-        self.mod_index + 1
+        self.mod_index
     }
 
     pub fn matches<'a>(&self, sequence: &'a [u8]) -> Vec<usize> {
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_degenerate_motif_matches() {
-        let motif = MotifQuery::parse("RGATCY_6mA_2").unwrap();
+        let motif = MotifQuery::parse("RGATCY_6mA_1").unwrap();
         let hits = motif.matches(b"AGATCT");
         assert_eq!(hits, vec![0]);
 

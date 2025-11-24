@@ -1,2 +1,5 @@
 /target
 results*
+workflow.done
+.snakemake
+.cache
