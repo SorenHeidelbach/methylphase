@@ -20,13 +20,14 @@ pub fn run(
     sequence_fallback: Option<PathBuf>,
     sequence_index: Option<PathBuf>,
     output_dir: PathBuf,
+    bin_ids: Option<Vec<String>>,
     contigs: Vec<String>,
 ) -> Result<()> {
     if block_size == 0 {
         bail!("block-size must be greater than zero");
     }
 
-    let motif_queries = shared::load_motif_queries(motifs, motif_file)?;
+    let motif_queries = shared::load_motif_queries(motifs, motif_file, bin_ids.as_deref())?;
     let motif_count = motif_queries.len();
     let block_size_bp = i64::try_from(block_size).context("block size exceeds i64 range")?;
     let mut analyzer = LongitudinalAnalyzer::new(block_size_bp);

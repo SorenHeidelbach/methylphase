@@ -5,9 +5,10 @@ use std::path::PathBuf;
 pub fn load_motif_queries(
     mut motifs: Vec<String>,
     motif_file: Option<PathBuf>,
+    bin_ids: Option<&[String]>,
 ) -> Result<Vec<MotifQuery>> {
     if let Some(path) = motif_file {
-        let mut file_specs = load_motif_file(&path)?;
+        let mut file_specs = load_motif_file(&path, bin_ids)?;
         motifs.append(&mut file_specs);
     }
 

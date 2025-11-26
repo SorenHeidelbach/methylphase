@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use methylation_phasing::{
-    cli::{Cli, Command},
+    cli::{Cli, Command, ContigSelection},
     run,
 };
 use noodles_bam as bam;
@@ -33,7 +33,7 @@ fn extract_command_produces_expected_reports() -> Result<()> {
             sequence_fallback: None,
             sequence_index: None,
             output_dir: output_dir.clone(),
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -75,7 +75,7 @@ fn extract_command_can_write_to_output_dir_defaults() -> Result<()> {
             sequence_fallback: None,
             sequence_index: None,
             output_dir: out_dir.clone(),
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -118,7 +118,7 @@ fn split_reads_command_clusters_and_writes_fastqs() -> Result<()> {
             min_samples: Some(1),
             emit_fastq: true,
             threads: 1,
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -155,7 +155,7 @@ fn split_reads_supports_multiple_threads() -> Result<()> {
             min_samples: Some(1),
             emit_fastq: true,
             threads: 2,
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -184,7 +184,7 @@ fn split_reads_imputes_missing_data() -> Result<()> {
             min_samples: Some(1),
             emit_fastq: true,
             threads: 1,
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -214,7 +214,7 @@ fn extract_handles_ambiguous_motif() -> Result<()> {
             sequence_fallback: None,
             sequence_index: None,
             output_dir: output_dir.clone(),
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -256,13 +256,56 @@ fn extract_handles_reverse_read() -> Result<()> {
             sequence_fallback: None,
             sequence_index: None,
             output_dir: out_dir.clone(),
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
     run(cli)?;
     let per_contents = fs::read_to_string(out_dir.join("per_read.tsv"))?;
     assert!(per_contents.contains("read_rev"));
+    Ok(())
+}
+
+#[test]
+fn extract_filters_motifs_per_bin() -> Result<()> {
+    let tmp = tempdir()?;
+    let bam_path = tmp.path().join("modcalls.bam");
+    write_test_bam(&bam_path)?;
+
+    let bins_path = tmp.path().join("bins.tsv");
+    fs::write(&bins_path, "ctg\tbinA\nctg\tbinB\n")?;
+
+    let motif_path = tmp.path().join("motifs.tsv");
+    fs::write(
+        &motif_path,
+        "id\tmotif\tmod_type\tmod_position\nbinA\tGATC\t6mA\t1\nbinB\tCCWGG\tm\t0\n",
+    )?;
+
+    let output_dir = tmp.path().join("bin_outputs");
+    let cli = Cli {
+        command: Command::Extract {
+            bam: bam_path,
+            motifs: Vec::new(),
+            motif_file: Some(motif_path),
+            motif_summary_tsv: None,
+            fastq_dir: None,
+            sequence_fallback: None,
+            sequence_index: None,
+            output_dir: output_dir.clone(),
+            contig_args: ContigSelection {
+                contigs: Vec::new(),
+                contig_bins: Some(bins_path),
+            },
+        },
+    };
+
+    run(cli)?;
+
+    let bin_a = fs::read_to_string(output_dir.join("binA").join("per_read.tsv"))?;
+    assert!(bin_a.contains("GATC_6mA_1"));
+
+    let bin_b = fs::read_to_string(output_dir.join("binB").join("per_read.tsv"))?;
+    assert!(!bin_b.contains("GATC_6mA_1"));
     Ok(())
 }
 
@@ -284,7 +327,7 @@ fn vcf_command_writes_records() -> Result<()> {
             sample_name: Some("sample1".to_string()),
             methylation_threshold: 0.5,
             plain_output: true,
-            contigs: Vec::new(),
+            contig_args: ContigSelection::default(),
         },
     };
 
@@ -315,6 +358,7 @@ fn impute_bam_rewrites_sequence_and_quality() -> Result<()> {
             motifs: Vec::new(),
             motif_file: None,
             impute_all: true,
+            contig_args: ContigSelection::default(),
         },
     };
 

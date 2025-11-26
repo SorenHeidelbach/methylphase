@@ -1,6 +1,6 @@
 [package]
 name = "methylation_phasing"
-version = "0.2.5"
+version = "0.2.8"
 edition = "2021"
 
 [dependencies]
@@ -18,5 +18,6 @@ hdbscan = "0.4"
 crossbeam-channel = "0.5"
 flate2 = "1"
 tempfile = "3"
+rayon = "1.10"
 
 [dev-dependencies]

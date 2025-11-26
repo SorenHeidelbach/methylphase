@@ -1,8 +1,8 @@
 use anyhow::{bail, Context, Result};
 use csv::{ReaderBuilder, StringRecord, Trim};
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 
-pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
+pub fn load_motif_file(path: &Path, allowed_ids: Option<&[String]>) -> Result<Vec<String>> {
     let data =
         fs::read(path).with_context(|| format!("failed to read motif file {}", path.display()))?;
     if data.is_empty() {
@@ -30,6 +30,9 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
         .ok_or_else(|| anyhow::anyhow!("mod_position column missing in {}", path.display()))?;
     let motif_comp_idx = find_column(&headers, "motif_complement");
     let mod_pos_comp_idx = find_column(&headers, "mod_position_complement");
+    let bin_idx = ["id", "bin", "reference"]
+        .iter()
+        .find_map(|name| find_column(&headers, name));
 
     if motif_comp_idx.is_some() ^ mod_pos_comp_idx.is_some() {
         bail!(
@@ -38,10 +41,22 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
         );
     }
 
+    let allowed_lookup = match allowed_ids {
+        Some(ids) if !ids.is_empty() => Some(ids.iter().cloned().collect::<HashSet<String>>()),
+        _ => None,
+    };
+
     let mut specs = Vec::new();
     for record in reader.records() {
         let record = record
             .with_context(|| format!("failed to read motif file record in {}", path.display()))?;
+
+        if let (Some(idx), Some(ref allowed)) = (bin_idx, allowed_lookup.as_ref()) {
+            let identifier = record.get(idx).map(str::trim).unwrap_or("");
+            if identifier.is_empty() || !allowed.contains(identifier) {
+                continue;
+            }
+        }
 
         let motif = record
             .get(motif_idx)
@@ -88,10 +103,7 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
-            let comp_position = record
-                .get(pos_idx)
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
+            let comp_position = record.get(pos_idx).map(str::trim).filter(|s| !s.is_empty());
 
             if let (Some(comp_motif), Some(comp_position)) = (comp_motif, comp_position) {
                 let position: usize = comp_position.parse().with_context(|| {
@@ -119,7 +131,23 @@ pub fn load_motif_file(path: &Path) -> Result<Vec<String>> {
     }
 
     if specs.is_empty() {
-        bail!("motif file {} produced no entries", path.display());
+        if bin_idx.is_some() && allowed_lookup.is_some() {
+            let ids = allowed_lookup
+                .as_ref()
+                .map(|set| {
+                    let mut values: Vec<_> = set.iter().cloned().collect();
+                    values.sort();
+                    values.join(",")
+                })
+                .unwrap_or_default();
+            bail!(
+                "motif file {} produced no entries for ids {}",
+                path.display(),
+                ids
+            );
+        } else {
+            bail!("motif file {} produced no entries", path.display());
+        }
     }
 
     Ok(specs)
@@ -196,7 +224,7 @@ mod tests {
             "motif\tmod_type\tmod_position\nGATC\t6mA\t1\nCCWGG\tm\t0"
         )
         .unwrap();
-        let specs = load_motif_file(file.path()).unwrap();
+        let specs = load_motif_file(file.path(), None).unwrap();
         assert_eq!(
             specs,
             vec!["GATC_6mA_1".to_string(), "CCWGG_5mC_0".to_string()]
@@ -213,7 +241,7 @@ mod tests {
              CCWGG\tm\t0\tCCWGG\t4"
         )
         .unwrap();
-        let specs = load_motif_file(file.path()).unwrap();
+        let specs = load_motif_file(file.path(), None).unwrap();
         assert_eq!(
             specs,
             vec![
@@ -222,6 +250,53 @@ mod tests {
                 "CCWGG_5mC_0".to_string(),
                 "CCWGG_5mC_4".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn test_load_motif_file_filters_by_bin_column() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "bin\tmotif\tmod_type\tmod_position\n\
+             binA\tGATC\t6mA\t1\n\
+             binB\tCCWGG\tm\t0"
+        )
+        .unwrap();
+        let ids = vec!["binB".to_string()];
+        let specs = load_motif_file(file.path(), Some(&ids)).unwrap();
+        assert_eq!(specs, vec!["CCWGG_5mC_0".to_string()]);
+    }
+
+    #[test]
+    fn test_load_motif_file_supports_reference_column_case_insensitive() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "Reference\tmotif\tmod_type\tmod_position\n\
+             BINA\tGATC\t6mA\t1\n\
+             BINB\tCCWGG\tm\t0"
+        )
+        .unwrap();
+        let ids = vec!["BINB".to_string()];
+        let specs = load_motif_file(file.path(), Some(&ids)).unwrap();
+        assert_eq!(specs, vec!["CCWGG_5mC_0".to_string()]);
+    }
+
+    #[test]
+    fn test_load_motif_file_errors_when_bin_missing() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "bin\tmotif\tmod_type\tmod_position\n\
+             binA\tGATC\t6mA\t1"
+        )
+        .unwrap();
+        let ids = vec!["binB".to_string()];
+        let err = load_motif_file(file.path(), Some(&ids)).unwrap_err();
+        assert!(
+            err.to_string().contains("produced no entries for ids binB"),
+            "unexpected error: {err}"
         );
     }
 }

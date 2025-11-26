@@ -25,9 +25,10 @@ pub fn run(
     sample_name: Option<String>,
     methylation_threshold: f32,
     plain_output: bool,
+    bin_ids: Option<Vec<String>>,
     contigs: Vec<String>,
 ) -> Result<()> {
-    let motif_queries = shared::load_motif_queries(motifs, motif_file)?;
+    let motif_queries = shared::load_motif_queries(motifs, motif_file, bin_ids.as_deref())?;
     let sample_name = sample_name.unwrap_or_else(|| "sample".to_string());
     let output_paths = resolve_output_paths(output, !plain_output);
 

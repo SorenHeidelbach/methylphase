@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 /// Command-line interface definition.
@@ -13,6 +13,22 @@ pub struct Cli {
     pub command: Command,
 }
 
+#[derive(Debug, Clone, Default, Args)]
+pub struct ContigSelection {
+    /// Restrict processing to the provided contigs.
+    #[arg(
+        short = 'c',
+        long = "contig",
+        value_name = "CONTIG",
+        value_delimiter = ','
+    )]
+    pub contigs: Vec<String>,
+
+    /// Optional TSV/CSV mapping contig identifiers to bins (contig<TAB>bin).
+    #[arg(long = "contig-bins", value_name = "TSV")]
+    pub contig_bins: Option<PathBuf>,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// List contigs present in the BAM.
@@ -20,6 +36,9 @@ pub enum Command {
         /// Path to the indexed BAM file.
         #[arg(value_name = "BAM")]
         bam: PathBuf,
+
+        #[command(flatten)]
+        contig_args: ContigSelection,
     },
     /// Emit read identifiers for the requested contigs.
     Reads {
@@ -27,9 +46,8 @@ pub enum Command {
         #[arg(value_name = "BAM")]
         bam: PathBuf,
 
-        /// Contigs to query. If omitted all contigs are used.
-        #[arg(short, long, value_name = "CONTIG", num_args = 1.., value_delimiter = ',')]
-        contigs: Vec<String>,
+        #[command(flatten)]
+        contig_args: ContigSelection,
 
         /// Maximum number of read identifiers to emit per contig.
         #[arg(long)]
@@ -51,7 +69,7 @@ pub enum Command {
         )]
         motifs: Vec<String>,
 
-        /// Path to a TSV/CSV with columns motif, mod_type, mod_position.
+        /// Path to a TSV/CSV with columns motif, mod_type, mod_position (optional motif_complement, mod_position_complement, and id/bin/reference for bin-specific motifs).
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
@@ -75,14 +93,8 @@ pub enum Command {
         #[arg(long = "output-dir", value_name = "DIR")]
         output_dir: PathBuf,
 
-        /// Restrict processing to the provided contigs.
-        #[arg(
-            short = 'c',
-            long = "contig",
-            value_name = "CONTIG",
-            value_delimiter = ','
-        )]
-        contigs: Vec<String>,
+        #[command(flatten)]
+        contig_args: ContigSelection,
     },
     /// Evaluate longitudinal methylation agreement across contigs.
     Longitudinal {
@@ -100,7 +112,7 @@ pub enum Command {
         )]
         motifs: Vec<String>,
 
-        /// Path to a TSV/CSV with columns motif, mod_type, mod_position.
+        /// Path to a TSV/CSV with columns motif, mod_type, mod_position (optional motif_complement, mod_position_complement, and id/bin/reference for bin-specific motifs).
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
@@ -124,14 +136,8 @@ pub enum Command {
         #[arg(long = "sequence-index", value_name = "FILE")]
         sequence_index: Option<PathBuf>,
 
-        /// Restrict processing to the provided contigs.
-        #[arg(
-            short = 'c',
-            long = "contig",
-            value_name = "CONTIG",
-            value_delimiter = ','
-        )]
-        contigs: Vec<String>,
+        #[command(flatten)]
+        contig_args: ContigSelection,
     },
     /// Cluster reads by motif methylation and split FASTQs by cluster.
     SplitReads {
@@ -149,7 +155,7 @@ pub enum Command {
         )]
         motifs: Vec<String>,
 
-        /// Path to a TSV/CSV with columns motif, mod_type, mod_position.
+        /// Path to a TSV/CSV with columns motif, mod_type, mod_position (optional motif_complement, mod_position_complement, and id/bin/reference for bin-specific motifs).
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
@@ -181,14 +187,8 @@ pub enum Command {
         #[arg(long = "threads", default_value_t = 1)]
         threads: usize,
 
-        /// Restrict processing to the provided contigs.
-        #[arg(
-            short = 'c',
-            long = "contig",
-            value_name = "CONTIG",
-            value_delimiter = ','
-        )]
-        contigs: Vec<String>,
+        #[command(flatten)]
+        contig_args: ContigSelection,
     },
     /// Summarize motif methylation as a VCF.
     Vcf {
@@ -206,7 +206,7 @@ pub enum Command {
         )]
         motifs: Vec<String>,
 
-        /// Path to a TSV/CSV with columns motif, mod_type, mod_position.
+        /// Path to a TSV/CSV with columns motif, mod_type, mod_position (optional motif_complement, mod_position_complement, and id/bin/reference for bin-specific motifs).
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
@@ -234,14 +234,8 @@ pub enum Command {
         #[arg(long = "plain-output")]
         plain_output: bool,
 
-        /// Restrict processing to the provided contigs.
-        #[arg(
-            short = 'c',
-            long = "contig",
-            value_name = "CONTIG",
-            value_delimiter = ','
-        )]
-        contigs: Vec<String>,
+        #[command(flatten)]
+        contig_args: ContigSelection,
     },
     /// Impute high-confidence methylation calls directly into the BAM.
     ImputeBam {
@@ -271,12 +265,15 @@ pub enum Command {
         )]
         motifs: Vec<String>,
 
-        /// Path to a TSV/CSV with columns motif, mod_type, mod_position.
+        /// Path to a TSV/CSV with columns motif, mod_type, mod_position (optional motif_complement, mod_position_complement, and id/bin/reference for bin-specific motifs).
         #[arg(long = "motif-file", value_name = "FILE")]
         motif_file: Option<PathBuf>,
 
         /// Impute every high-confidence modification (ignores motifs).
         #[arg(long = "impute-all", conflicts_with_all = ["motifs", "motif_file"])]
         impute_all: bool,
+
+        #[command(flatten)]
+        contig_args: ContigSelection,
     },
 }

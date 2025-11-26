@@ -26,15 +26,18 @@ pub fn run(
     motifs: Vec<String>,
     motif_file: Option<PathBuf>,
     impute_all: bool,
+    bin_ids: Option<Vec<String>>,
+    contigs: Vec<String>,
 ) -> Result<()> {
     if !(0.0..=1.0).contains(&methylation_threshold) {
         bail!("methylation-threshold must be between 0.0 and 1.0");
     }
 
+    let bin_id_refs = bin_ids.as_deref();
     let motif_queries = if impute_all {
         None
     } else {
-        let queries = shared::load_motif_queries(motifs, motif_file)?
+        let queries = shared::load_motif_queries(motifs, motif_file, bin_id_refs)?
             .into_iter()
             .collect::<Vec<_>>();
         if queries.is_empty() {
@@ -72,6 +75,12 @@ pub fn run(
         .iter()
         .map(|(name, _)| name.to_string())
         .collect();
+
+    let contig_filter = if contigs.is_empty() {
+        None
+    } else {
+        Some(contigs.into_iter().collect::<HashSet<_>>())
+    };
 
     let mut record = RecordBuf::default();
     let mut processed_reads = 0usize;
@@ -112,6 +121,12 @@ pub fn run(
             .get(ref_id)
             .cloned()
             .unwrap_or_else(|| "<unknown>".to_string());
+
+        if let Some(filter) = contig_filter.as_ref() {
+            if !filter.contains(&contig_name) {
+                continue;
+            }
+        }
 
         let reference_positions = map_read_to_reference_positions(&record)?;
         let motif_allowed_positions = motif_queries

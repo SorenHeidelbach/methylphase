@@ -339,6 +339,29 @@ rule longshot_original:
         longshot --bam "{input.bam}" --ref "{input.reference}" --out "{output}"
         """
 
+rule lorikeet_call_imputed:
+    input:
+        bam="results/{sample}/impute/imputed.bam",
+        reference=lambda w: cfg(w.sample, "reference", "data/{sample}/{sample}.fasta")
+    output:
+        directory("results/{sample}/lorikeet_imputed")
+    shell:
+        """
+        lorikeet call --longread-bam-files "{input.bam}" --reference "{input.reference}" -o "{output}"
+        """
+
+rule lorikeet_call_original:
+    input:
+        bam=lambda w: cfg(w.sample, "bam", "data/{sample}/{sample}.bam"),
+        reference=lambda w: cfg(w.sample, "reference", "data/{sample}/{sample}.fasta")
+    output:
+        directory("results/{sample}/lorikeet_original")
+    shell:
+        """
+        lorikeet call --longread-bam-files "{input.bam}" --reference "{input.reference}" -o "{output}"
+        """
+
+
 
 rule floria_imputed:
     input:

@@ -1,6 +1,5 @@
 use crate::core::{MotifQuery, ReadRecord, Strand};
 use anyhow::{bail, Result};
-use std::collections::HashMap;
 
 pub const QUANTILE_COUNT: usize = 11;
 pub const QUANTILE_PCTS: [u8; QUANTILE_COUNT] = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -31,6 +30,7 @@ pub trait ExtractionSink {
 pub struct Extractor<S: ExtractionSink> {
     motifs: Vec<MotifQuery>,
     sink: S,
+    scratch: MotifScratch,
 }
 
 impl<S: ExtractionSink> Extractor<S> {
@@ -39,11 +39,16 @@ impl<S: ExtractionSink> Extractor<S> {
             bail!("at least one motif must be supplied");
         }
 
-        Ok(Self { motifs, sink })
+        let scratch = MotifScratch::new(motifs.len());
+        Ok(Self {
+            motifs,
+            sink,
+            scratch,
+        })
     }
 
     pub fn process_read(&mut self, read: &ReadRecord) -> Result<()> {
-        process_read_with_motifs(read, &self.motifs, &mut self.sink)
+        process_read_with_motifs(read, &self.motifs, &mut self.sink, &mut self.scratch)
     }
 
     pub fn finish(mut self) -> Result<()> {
@@ -60,9 +65,9 @@ pub fn process_read_with_motifs<S: ExtractionSink>(
     read: &ReadRecord,
     motifs: &[MotifQuery],
     sink: &mut S,
+    scratch: &mut MotifScratch,
 ) -> Result<()> {
-    let mut per_read_stats: HashMap<&str, MotifStats> = HashMap::new();
-    let mut motif_hits = vec![false; motifs.len()];
+    scratch.prepare(motifs.len());
 
     for (idx, motif) in motifs.iter().enumerate() {
         let motif_name = motif.raw();
@@ -78,7 +83,7 @@ pub fn process_read_with_motifs<S: ExtractionSink>(
             };
 
             if call.methylated {
-                motif_hits[idx] = true;
+                scratch.hits[idx] = true;
             }
             sink.record_per_read(PerReadRecord {
                 read_id: &read.id,
@@ -94,17 +99,17 @@ pub fn process_read_with_motifs<S: ExtractionSink>(
                 mod_label: &call.kind.label,
             })?;
 
-            per_read_stats
-                .entry(motif_name)
-                .or_default()
-                .observe(call.probability);
+            scratch.stats[idx].observe(call.probability);
         }
     }
 
-    for (motif_name, stats) in per_read_stats {
+    for (idx, stats) in scratch.stats[..motifs.len()].iter().enumerate() {
+        if stats.count == 0 {
+            continue;
+        }
         sink.record_aggregate(AggregateRecord {
             read_id: &read.id,
-            motif_name,
+            motif_name: motifs[idx].raw(),
             call_count: stats.count,
             mean_probability: stats.mean_probability(),
             quantiles: stats.quantiles(),
@@ -114,14 +119,19 @@ pub fn process_read_with_motifs<S: ExtractionSink>(
     sink.record_motif_summary(MotifSummaryRecord {
         read_id: &read.id,
         contig: read.contig_name(),
-        hits: &motif_hits,
+        hits: &scratch.hits[..motifs.len()],
     })?;
 
-    let (combo_label, file_key) = motif_combo_key(&motif_hits, motifs);
+    let (combo_label, file_key) = motif_combo_key(
+        &scratch.hits[..motifs.len()],
+        motifs,
+        &mut scratch.combo_label,
+        &mut scratch.file_key,
+    );
     sink.record_fastq(FastqRecord {
         read_id: &read.id,
-        combo_label: &combo_label,
-        file_key: &file_key,
+        combo_label,
+        file_key,
         sequence: read.sequence(),
         qualities: read.quality_scores(),
     })?;
@@ -129,7 +139,40 @@ pub fn process_read_with_motifs<S: ExtractionSink>(
     Ok(())
 }
 
-#[derive(Default)]
+pub struct MotifScratch {
+    hits: Vec<bool>,
+    stats: Vec<MotifStats>,
+    combo_label: String,
+    file_key: String,
+}
+
+impl MotifScratch {
+    pub fn new(motif_count: usize) -> Self {
+        Self {
+            hits: vec![false; motif_count],
+            stats: vec![MotifStats::default(); motif_count],
+            combo_label: String::new(),
+            file_key: String::new(),
+        }
+    }
+
+    fn prepare(&mut self, motif_count: usize) {
+        if self.hits.len() < motif_count {
+            self.hits.resize(motif_count, false);
+        }
+        if self.stats.len() < motif_count {
+            self.stats.resize_with(motif_count, MotifStats::default);
+        }
+        for hit in &mut self.hits[..motif_count] {
+            *hit = false;
+        }
+        for stats in &mut self.stats[..motif_count] {
+            stats.reset();
+        }
+    }
+}
+
+#[derive(Default, Clone)]
 struct MotifStats {
     count: usize,
     probability_sum: f64,
@@ -137,6 +180,12 @@ struct MotifStats {
 }
 
 impl MotifStats {
+    fn reset(&mut self) {
+        self.count = 0;
+        self.probability_sum = 0.0;
+        self.probabilities.clear();
+    }
+
     fn observe(&mut self, probability: Option<f32>) {
         self.count += 1;
         if let Some(p) = probability {
@@ -180,6 +229,27 @@ pub struct PerReadRecord<'a> {
     pub mod_label: &'a str,
 }
 
+impl<'a> PerReadRecord<'a> {
+    pub fn into_owned(self) -> PerReadRecord<'static> {
+        PerReadRecord {
+            read_id: Box::leak(self.read_id.to_owned().into_boxed_str()),
+            contig: self
+                .contig
+                .map(|c| Box::leak(c.to_owned().into_boxed_str()) as *const str)
+                .map(|ptr| unsafe { &*ptr }),
+            strand: self.strand,
+            motif_name: Box::leak(self.motif_name.to_owned().into_boxed_str()),
+            motif_start: self.motif_start,
+            motif_position: self.motif_position,
+            read_position: self.read_position,
+            reference_position: self.reference_position,
+            probability: self.probability,
+            methylated: self.methylated,
+            mod_label: Box::leak(self.mod_label.to_owned().into_boxed_str()),
+        }
+    }
+}
+
 pub struct AggregateRecord<'a> {
     pub read_id: &'a str,
     pub motif_name: &'a str,
@@ -188,10 +258,35 @@ pub struct AggregateRecord<'a> {
     pub quantiles: Option<[f64; QUANTILE_COUNT]>,
 }
 
+impl<'a> AggregateRecord<'a> {
+    pub fn into_owned(self) -> AggregateRecord<'static> {
+        AggregateRecord {
+            read_id: Box::leak(self.read_id.to_owned().into_boxed_str()),
+            motif_name: Box::leak(self.motif_name.to_owned().into_boxed_str()),
+            call_count: self.call_count,
+            mean_probability: self.mean_probability,
+            quantiles: self.quantiles,
+        }
+    }
+}
+
 pub struct MotifSummaryRecord<'a> {
     pub read_id: &'a str,
     pub contig: Option<&'a str>,
     pub hits: &'a [bool],
+}
+
+impl<'a> MotifSummaryRecord<'a> {
+    pub fn into_owned(self) -> MotifSummaryRecord<'static> {
+        MotifSummaryRecord {
+            read_id: Box::leak(self.read_id.to_owned().into_boxed_str()),
+            contig: self
+                .contig
+                .map(|c| Box::leak(c.to_owned().into_boxed_str()) as *const str)
+                .map(|ptr| unsafe { &*ptr }),
+            hits: Box::leak(self.hits.to_vec().into_boxed_slice()),
+        }
+    }
 }
 
 pub struct FastqRecord<'a> {
@@ -202,27 +297,52 @@ pub struct FastqRecord<'a> {
     pub qualities: &'a [u8],
 }
 
-fn motif_combo_key(hits: &[bool], motifs: &[MotifQuery]) -> (String, String) {
-    let names: Vec<&str> = hits
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, hit)| (*hit).then_some(motifs[idx].raw()))
-        .collect();
-
-    let label = if names.is_empty() {
-        "NONE".to_string()
-    } else {
-        names.join("+")
-    };
-
-    let file_key = format!("combo_{}", sanitize_label(&label));
-    (label, file_key)
+impl<'a> FastqRecord<'a> {
+    pub fn into_owned(self) -> FastqRecord<'static> {
+        FastqRecord {
+            read_id: Box::leak(self.read_id.to_owned().into_boxed_str()),
+            combo_label: Box::leak(self.combo_label.to_owned().into_boxed_str()),
+            file_key: Box::leak(self.file_key.to_owned().into_boxed_str()),
+            sequence: Box::leak(self.sequence.to_vec().into_boxed_slice()),
+            qualities: Box::leak(self.qualities.to_vec().into_boxed_slice()),
+        }
+    }
 }
 
-fn sanitize_label(raw: &str) -> String {
-    raw.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+fn motif_combo_key<'a>(
+    hits: &[bool],
+    motifs: &[MotifQuery],
+    label: &'a mut String,
+    file_key: &'a mut String,
+) -> (&'a str, &'a str) {
+    label.clear();
+    file_key.clear();
+
+    let mut any = false;
+    for (idx, hit) in hits.iter().enumerate() {
+        if *hit {
+            if any {
+                label.push('+');
+            }
+            label.push_str(motifs[idx].raw());
+            any = true;
+        }
+    }
+
+    if !any {
+        label.push_str("NONE");
+    }
+
+    file_key.push_str("combo_");
+    for ch in label.chars() {
+        if ch.is_ascii_alphanumeric() {
+            file_key.push(ch);
+        } else {
+            file_key.push('_');
+        }
+    }
+
+    (&*label, &*file_key)
 }
 
 fn percentile(values: &[f32], fraction: f64) -> f64 {

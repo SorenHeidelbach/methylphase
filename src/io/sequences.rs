@@ -126,10 +126,7 @@ impl BamIndexed {
     fn sequence(&self, read_id: &str) -> Option<Vec<u8>> {
         let position = *self.entries.get(read_id)?;
         let mut reader = self.reader.lock().ok()?;
-        reader
-            .get_mut()
-            .seek_to_virtual_position(position)
-            .ok()?;
+        reader.get_mut().seek_to_virtual_position(position).ok()?;
         let mut record = bam::Record::default();
         if reader.read_record(&mut record).ok()? == 0 {
             return None;
@@ -198,7 +195,10 @@ fn build_fastq_index(fastq_path: &Path, index_path: &Path) -> Result<HashMap<Str
             .ok_or_else(|| anyhow!("invalid FASTQ header `{header}`"))?
             .to_string();
         if name.is_empty() {
-            bail!("encountered FASTQ record without a name in {}", fastq_path.display());
+            bail!(
+                "encountered FASTQ record without a name in {}",
+                fastq_path.display()
+            );
         }
 
         let mut seq = String::new();
@@ -253,7 +253,10 @@ fn build_fastq_index(fastq_path: &Path, index_path: &Path) -> Result<HashMap<Str
     Ok(entries)
 }
 
-fn resolve_fastq_index(path: &Path, index_hint: Option<&Path>) -> Result<(PathBuf, HashMap<String, u64>)> {
+fn resolve_fastq_index(
+    path: &Path,
+    index_hint: Option<&Path>,
+) -> Result<(PathBuf, HashMap<String, u64>)> {
     if let Some(explicit) = index_hint {
         if explicit.exists() {
             let entries = load_fastq_index(explicit)?;
@@ -320,8 +323,8 @@ fn materialize_fastq_from_gzip(path: &Path) -> Result<PathBuf> {
 }
 
 fn load_bam_index(path: &Path) -> Result<HashMap<String, bgzf::VirtualPosition>> {
-    let file = File::open(path)
-        .with_context(|| format!("failed to open BAM index {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("failed to open BAM index {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut entries = HashMap::new();
     for line in reader.lines() {
@@ -345,14 +348,17 @@ fn load_bam_index(path: &Path) -> Result<HashMap<String, bgzf::VirtualPosition>>
     Ok(entries)
 }
 
-fn build_bam_index(bam_path: &Path, index_path: &Path) -> Result<HashMap<String, bgzf::VirtualPosition>> {
+fn build_bam_index(
+    bam_path: &Path,
+    index_path: &Path,
+) -> Result<HashMap<String, bgzf::VirtualPosition>> {
     eprintln!(
         "sequence-fallback: building BAM index {} for {}",
         index_path.display(),
         bam_path.display()
     );
-    let file =
-        File::open(bam_path).with_context(|| format!("failed to open BAM {}", bam_path.display()))?;
+    let file = File::open(bam_path)
+        .with_context(|| format!("failed to open BAM {}", bam_path.display()))?;
     let mut reader = bam::io::Reader::new(file);
     reader
         .read_header()
@@ -438,10 +444,7 @@ mod tests {
     use super::*;
     use flate2::{write::GzEncoder, Compression};
     use noodles_bam as bam;
-    use noodles_sam::{
-        self as sam,
-        alignment::io::Write as SamAlignmentWrite,
-    };
+    use noodles_sam::{self as sam, alignment::io::Write as SamAlignmentWrite};
     use std::{
         fs,
         io::{Cursor, Write},

@@ -8,20 +8,20 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bstr::ByteSlice;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use hdbscan::{Hdbscan, HdbscanHyperParams};
 use noodles_bam::{self as bam, Record};
 use noodles_bgzf as bgzf;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::{
     collections::{hash_map::Entry, HashMap},
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
-    thread,
 };
 
 pub fn run(
@@ -35,12 +35,13 @@ pub fn run(
     min_samples: Option<usize>,
     emit_fastq: bool,
     threads: usize,
+    bin_ids: Option<Vec<String>>,
     contigs: Vec<String>,
 ) -> Result<()> {
     if min_cluster_size == 0 {
         bail!("min-cluster-size must be greater than zero");
     }
-    let motif_queries = shared::load_motif_queries(motifs, motif_file)?;
+    let motif_queries = shared::load_motif_queries(motifs, motif_file, bin_ids.as_deref())?;
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
@@ -96,15 +97,13 @@ pub fn run(
         (sink, count)
     } else {
         let shared = SharedSink::new(sink_holder.take().unwrap());
-        let count = process_reads_parallel(
+        let extractor = ParallelExtractor::new(motif_queries.clone(), shared, threads)?;
+        let count = extractor.run(
             &mut reader,
             &decoder,
             contig_filter.as_ref().map(|c| c.as_slice()),
-            motif_queries.clone(),
-            shared.clone(),
-            threads,
         )?;
-        let sink = shared.into_inner()?;
+        let sink = extractor.into_sink()?;
         (sink, count)
     };
     decoder.report();
@@ -129,7 +128,8 @@ pub fn run(
     }
     eprintln!(
         "Imputing feature matrix for {} reads and {} motifs...",
-        reads.len(), motif_names.len()
+        reads.len(),
+        motif_names.len()
     );
     let imputed_features = impute_features(&raw_features);
 
@@ -141,8 +141,11 @@ pub fn run(
         effective_min_cluster_size,
         effective_min_samples
     );
-    let assignments =
-        cluster_reads(&imputed_features, effective_min_cluster_size, effective_min_samples)?;
+    let assignments = cluster_reads(
+        &imputed_features,
+        effective_min_cluster_size,
+        effective_min_samples,
+    )?;
     write_clustering_results(
         &output_dir,
         &reads,
@@ -178,59 +181,224 @@ struct SequenceInfo {
     qualities: Vec<u8>,
 }
 
+enum ExtractionEvent {
+    PerRead(PerReadRecord<'static>),
+    Aggregate(AggregateRecord<'static>),
+    Summary(MotifSummaryRecord<'static>),
+    Fastq(FastqRecord<'static>),
+}
+
 struct SharedSink<S> {
-    inner: Arc<Mutex<S>>,
+    sender: Sender<ExtractionEvent>,
+    inner: Arc<Mutex<Option<S>>>,
+    join_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 impl<S> Clone for SharedSink<S> {
     fn clone(&self) -> Self {
         Self {
+            sender: self.sender.clone(),
             inner: Arc::clone(&self.inner),
+            join_handle: Arc::clone(&self.join_handle),
         }
     }
 }
 
-impl<S> SharedSink<S> {
+impl<S> SharedSink<S>
+where
+    S: ExtractionSink + Send + 'static,
+{
     fn new(inner: S) -> Self {
+        let (tx, rx) = unbounded();
+        let state = Arc::new(Mutex::new(Some(inner)));
+        let state_clone = Arc::clone(&state);
+        let join_handle = Arc::new(Mutex::new(None));
+        let join_handle_clone = Arc::clone(&join_handle);
+        let handle = std::thread::spawn(move || {
+            if let Some(mut sink) = state_clone.lock().ok().and_then(|mut guard| guard.take()) {
+                for event in rx.iter() {
+                    match event {
+                        ExtractionEvent::PerRead(record) => {
+                            let _ = sink.record_per_read(record);
+                        }
+                        ExtractionEvent::Aggregate(record) => {
+                            let _ = sink.record_aggregate(record);
+                        }
+                        ExtractionEvent::Summary(record) => {
+                            let _ = sink.record_motif_summary(record);
+                        }
+                        ExtractionEvent::Fastq(record) => {
+                            let _ = sink.record_fastq(record);
+                        }
+                    }
+                }
+                let _ = sink.finish();
+                *state_clone.lock().unwrap() = Some(sink);
+            }
+        });
+        *join_handle_clone.lock().unwrap() = Some(handle);
         Self {
-            inner: Arc::new(Mutex::new(inner)),
+            sender: tx,
+            inner: state,
+            join_handle,
         }
     }
 
     fn into_inner(self) -> Result<S> {
+        drop(self.sender);
+        if let Some(handle) = self.join_handle.lock().unwrap().take() {
+            let _ = handle.join();
+        }
         match Arc::try_unwrap(self.inner) {
             Ok(mutex) => mutex
                 .into_inner()
-                .map_err(|e| anyhow!("failed to unlock sink: {e}")),
+                .map_err(|e| anyhow!("failed to unlock sink: {e}"))?
+                .ok_or_else(|| anyhow!("sink not available")),
             Err(_) => Err(anyhow!("sink still has outstanding references at shutdown")),
         }
     }
 }
 
-impl<S: ExtractionSink> ExtractionSink for SharedSink<S> {
+impl<S: ExtractionSink + Send + 'static> ExtractionSink for SharedSink<S> {
     fn record_per_read(&mut self, record: PerReadRecord<'_>) -> Result<()> {
-        let mut guard = self.inner.lock().map_err(|e| anyhow!(e.to_string()))?;
-        guard.record_per_read(record)
+        self.sender
+            .send(ExtractionEvent::PerRead(record.into_owned()))
+            .map_err(|e| anyhow!(e.to_string()))
     }
 
     fn record_aggregate(&mut self, record: AggregateRecord<'_>) -> Result<()> {
-        let mut guard = self.inner.lock().map_err(|e| anyhow!(e.to_string()))?;
-        guard.record_aggregate(record)
+        self.sender
+            .send(ExtractionEvent::Aggregate(record.into_owned()))
+            .map_err(|e| anyhow!(e.to_string()))
     }
 
     fn record_motif_summary(&mut self, record: MotifSummaryRecord<'_>) -> Result<()> {
-        let mut guard = self.inner.lock().map_err(|e| anyhow!(e.to_string()))?;
-        guard.record_motif_summary(record)
+        self.sender
+            .send(ExtractionEvent::Summary(record.into_owned()))
+            .map_err(|e| anyhow!(e.to_string()))
     }
 
     fn record_fastq(&mut self, record: FastqRecord<'_>) -> Result<()> {
-        let mut guard = self.inner.lock().map_err(|e| anyhow!(e.to_string()))?;
-        guard.record_fastq(record)
+        self.sender
+            .send(ExtractionEvent::Fastq(record.into_owned()))
+            .map_err(|e| anyhow!(e.to_string()))
     }
 
     fn finish(&mut self) -> Result<()> {
-        let mut guard = self.inner.lock().map_err(|e| anyhow!(e.to_string()))?;
-        guard.finish()
+        Ok(())
+    }
+}
+
+struct ParallelExtractor<S> {
+    pool: ThreadPool,
+    threads: usize,
+    motifs: Vec<MotifQuery>,
+    sink: SharedSink<S>,
+}
+
+impl<S> ParallelExtractor<S>
+where
+    S: ExtractionSink + Send + 'static,
+{
+    fn new(motifs: Vec<MotifQuery>, sink: SharedSink<S>, threads: usize) -> Result<Self> {
+        let worker_count = threads.max(1);
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .build()
+            .context("failed to create thread pool for split_reads")?;
+        Ok(Self {
+            pool,
+            threads: worker_count,
+            motifs,
+            sink,
+        })
+    }
+
+    fn run(
+        &self,
+        reader: &mut BamReader,
+        decoder: &BamRecordDecoder,
+        contigs: Option<&[String]>,
+    ) -> Result<usize> {
+        let queue_depth = (self.threads * 4).max(1);
+        let (tx, rx): (Sender<ReadRecord>, Receiver<ReadRecord>) = bounded(queue_depth);
+        let processed = Arc::new(AtomicUsize::new(0));
+        let aborted = Arc::new(AtomicBool::new(false));
+        let error_slot: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
+        let (done_tx, done_rx) = bounded(self.threads);
+
+        for _ in 0..self.threads {
+            let rx = rx.clone();
+            let motifs = self.motifs.clone();
+            let mut sink = self.sink.clone();
+            let processed = Arc::clone(&processed);
+            let aborted = Arc::clone(&aborted);
+            let error_slot = Arc::clone(&error_slot);
+            let done_tx = done_tx.clone();
+            self.pool.spawn(move || {
+                let mut scratch = crate::features::extract::MotifScratch::new(motifs.len());
+                while !aborted.load(Ordering::Relaxed) {
+                    match rx.recv() {
+                        Ok(read) => {
+                            if let Err(err) = extract::process_read_with_motifs(
+                                &read,
+                                &motifs,
+                                &mut sink,
+                                &mut scratch,
+                            ) {
+                                aborted.store(true, Ordering::Relaxed);
+                                Self::store_error(&error_slot, err);
+                                break;
+                            }
+                            let total = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                            if total % 1_000 == 0 {
+                                eprintln!("split_reads: processed {} reads...", total);
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = done_tx.send(());
+            });
+        }
+
+        drop(done_tx);
+        drop(rx);
+
+        if let Err(err) = reader.visit_records(contigs, |record| {
+            if aborted.load(Ordering::Relaxed) {
+                return Err(anyhow!("parallel extraction aborted"));
+            }
+            let read = decoder.decode(record)?;
+            tx.send(read)
+                .map_err(|send_err| anyhow!("failed to dispatch read: {send_err}"))?;
+            Ok(())
+        }) {
+            aborted.store(true, Ordering::Relaxed);
+            Self::store_error(&error_slot, err);
+        }
+
+        drop(tx);
+
+        while done_rx.recv().is_ok() {}
+
+        if let Some(err) = error_slot.lock().expect("error mutex poisoned").take() {
+            return Err(err);
+        }
+
+        Ok(processed.load(Ordering::Relaxed))
+    }
+
+    fn into_sink(self) -> Result<S> {
+        self.sink.into_inner()
+    }
+
+    fn store_error(slot: &Arc<Mutex<Option<anyhow::Error>>>, err: anyhow::Error) {
+        if let Ok(mut guard) = slot.lock() {
+            if guard.is_none() {
+                *guard = Some(err);
+            }
+        }
     }
 }
 
@@ -443,6 +611,7 @@ fn write_cluster_fastqs(
         .with_context(|| format!("failed to create {}", clusters_dir.display()))?;
     let mut writers: HashMap<i32, BufWriter<File>> = HashMap::new();
 
+    let mut quality_buffer = Vec::new();
     for (idx, read_id) in read_ids.iter().enumerate() {
         let seq = match sequences.get(read_id) {
             Some(seq) => seq,
@@ -461,8 +630,8 @@ fn write_cluster_fastqs(
         writer.write_all(b"\n")?;
         writer.write_all(&seq.sequence)?;
         writer.write_all(b"\n+\n")?;
-        let qual = encode_fastq_quality(&seq.qualities, seq.sequence.len());
-        writer.write_all(qual.as_bytes())?;
+        let qual = encode_fastq_quality(&seq.qualities, seq.sequence.len(), &mut quality_buffer);
+        writer.write_all(qual)?;
         writer.write_all(b"\n")?;
         if (idx + 1) % 1_000 == 0 {
             eprintln!("split_reads: wrote {} reads to cluster FASTQs...", idx + 1);
@@ -554,7 +723,7 @@ fn auto_min_cluster_size(read_count: usize) -> usize {
     if read_count == 0 {
         return minimum;
     }
-    ((read_count as f64).sqrt().ceil() as usize).max(minimum)
+    ((read_count as f64 / 50.0).ceil() as usize).max(minimum)
 }
 
 fn auto_hdbscan_min_samples(read_count: usize) -> usize {
@@ -562,68 +731,23 @@ fn auto_hdbscan_min_samples(read_count: usize) -> usize {
     if read_count == 0 {
         return minimum;
     }
-    ((read_count as f64 / 10.0).ceil() as usize).max(minimum)
+    ((read_count as f64 / 50.0).ceil() as usize).max(minimum)
 }
 
-fn process_reads_parallel<S>(
-    reader: &mut BamReader,
-    decoder: &BamRecordDecoder,
-    contigs: Option<&[String]>,
-    motifs: Vec<MotifQuery>,
-    shared_sink: SharedSink<S>,
-    threads: usize,
-) -> Result<usize>
-where
-    S: ExtractionSink + Send + 'static,
-{
-    let (tx, rx): (Sender<ReadRecord>, Receiver<ReadRecord>) = bounded(threads * 4);
-    let processed = Arc::new(AtomicUsize::new(0));
-    let mut handles = Vec::new();
-    for _ in 0..threads {
-        let rx = rx.clone();
-        let motifs = motifs.clone();
-        let mut sink = shared_sink.clone();
-        let processed = processed.clone();
-        handles.push(thread::spawn(move || -> Result<usize> {
-            let mut local = 0usize;
-            while let Ok(read) = rx.recv() {
-                extract::process_read_with_motifs(&read, &motifs, &mut sink)?;
-                local += 1;
-                let total = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                if total % 1_000 == 0 {
-                    eprintln!("split_reads: processed {} reads...", total);
-                }
-            }
-            Ok(local)
-        }));
-    }
-    drop(rx);
-
-    reader.visit_records(contigs, |record| {
-        let read = decoder.decode(record)?;
-        tx.send(read)
-            .map_err(|e| anyhow!("failed to dispatch read: {e}"))?;
-        Ok(())
-    })?;
-    drop(tx);
-
-    let mut total = 0usize;
-    for handle in handles {
-        total += handle
-            .join()
-            .map_err(|_| anyhow!("worker thread panicked"))??;
-    }
-    Ok(total)
-}
-
-fn encode_fastq_quality(qualities: &[u8], len: usize) -> String {
+fn encode_fastq_quality<'a>(qualities: &[u8], len: usize, buffer: &'a mut Vec<u8>) -> &'a [u8] {
+    buffer.clear();
     if qualities.is_empty() {
-        return std::iter::repeat('!').take(len).collect();
+        buffer.resize(len, b'!');
+        return buffer.as_slice();
     }
-    qualities
-        .iter()
-        .map(|q| (q.saturating_add(33)) as char)
-        .collect()
+    buffer.reserve(len);
+    for q in qualities.iter().copied().take(len) {
+        buffer.push(q.saturating_add(33));
+    }
+    while buffer.len() < len {
+        buffer.push(b'!');
+    }
+    buffer.as_slice()
 }
 
 fn retain_dense_features(
@@ -674,82 +798,115 @@ fn impute_features(rows: &[Vec<Option<f64>>]) -> Vec<Vec<f64>> {
         return Vec::new();
     }
 
+    let row_count = rows.len();
     let motif_count = rows[0].len();
-    let mut data = rows.to_vec();
-    let mut column_counts = vec![0usize; motif_count];
+    let mut imputed = vec![vec![0.0f64; motif_count]; row_count];
+    let mut row_entries: Vec<Vec<(usize, f64)>> = Vec::with_capacity(row_count);
+    let mut column_entries: Vec<Vec<(usize, f64)>> = vec![Vec::new(); motif_count];
     let mut column_sums = vec![0.0f64; motif_count];
-    let mut missing_counts = vec![0usize; motif_count];
-    for row in &data {
-        for (idx, value) in row.iter().enumerate() {
+    let mut column_counts = vec![0usize; motif_count];
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        let mut entries = Vec::new();
+        for (col_idx, value) in row.iter().enumerate() {
             match value {
                 Some(v) => {
-                    column_sums[idx] += *v;
-                    column_counts[idx] += 1;
+                    imputed[row_idx][col_idx] = *v;
+                    entries.push((col_idx, *v));
+                    column_entries[col_idx].push((row_idx, *v));
+                    column_sums[col_idx] += *v;
+                    column_counts[col_idx] += 1;
                 }
-                None => missing_counts[idx] += 1,
+                None => imputed[row_idx][col_idx] = f64::NAN,
+            }
+        }
+        row_entries.push(entries);
+    }
+
+    let mut column_means = vec![0.5f64; motif_count];
+    for idx in 0..motif_count {
+        if column_counts[idx] > 0 {
+            column_means[idx] = column_sums[idx] / column_counts[idx] as f64;
+        }
+    }
+
+    for row_idx in 0..row_count {
+        for col_idx in 0..motif_count {
+            if imputed[row_idx][col_idx].is_nan() {
+                let value = nearest_value(
+                    row_idx,
+                    col_idx,
+                    &row_entries,
+                    &column_entries[col_idx],
+                    column_means[col_idx],
+                );
+                imputed[row_idx][col_idx] = value;
             }
         }
     }
 
-    let mut column_order: Vec<usize> = (0..motif_count).collect();
-    column_order.sort_by_key(|idx| missing_counts[*idx]);
-
-    for &col_idx in &column_order {
-        let mean = if column_counts[col_idx] > 0 {
-            column_sums[col_idx] / column_counts[col_idx] as f64
-        } else {
-            0.5
-        };
-        for row_idx in 0..data.len() {
-            if data[row_idx][col_idx].is_none() {
-                let value = nearest_value(&data, row_idx, col_idx).unwrap_or(mean);
-                data[row_idx][col_idx] = Some(value);
-            }
-        }
-    }
-
-    data.into_iter()
-        .map(|row| row.into_iter().map(|value| value.unwrap_or(0.5)).collect())
-        .collect()
+    imputed
 }
 
-fn nearest_value(rows: &[Vec<Option<f64>>], target_row: usize, column: usize) -> Option<f64> {
+fn nearest_value(
+    target_row: usize,
+    column: usize,
+    rows: &[Vec<(usize, f64)>],
+    column_rows: &[(usize, f64)],
+    fallback: f64,
+) -> f64 {
+    if column_rows.is_empty() {
+        return fallback;
+    }
+
     let mut best_dist = f64::INFINITY;
     let mut best_value = None;
-    for (idx, row) in rows.iter().enumerate() {
-        if idx == target_row {
+    let target = &rows[target_row];
+
+    for &(candidate_idx, candidate_value) in column_rows {
+        if candidate_idx == target_row {
             continue;
         }
-        if let Some(value) = row[column] {
-            if let Some(dist) = row_distance_without_column(&rows[target_row], row, column) {
-                if dist < best_dist {
-                    best_dist = dist;
-                    best_value = Some(value);
-                }
+        let candidate = &rows[candidate_idx];
+        if let Some(dist) = row_distance_without_column(target, candidate, column) {
+            if dist < best_dist {
+                best_dist = dist;
+                best_value = Some(candidate_value);
             }
         }
     }
-    best_value
+
+    best_value.unwrap_or(fallback)
 }
 
 fn row_distance_without_column(
-    a: &[Option<f64>],
-    b: &[Option<f64>],
+    a: &[(usize, f64)],
+    b: &[(usize, f64)],
     skip_col: usize,
 ) -> Option<f64> {
+    let mut ia = 0usize;
+    let mut ib = 0usize;
     let mut sum = 0.0;
     let mut count = 0usize;
-    for (idx, (av, bv)) in a.iter().zip(b.iter()).enumerate() {
-        if idx == skip_col {
-            continue;
-        }
-        // eucledian distance
-        if let (Some(x), Some(y)) = (av, bv) {
-            let diff = x - y;
-            sum += diff * diff;
-            count += 1;
+
+    while ia < a.len() && ib < b.len() {
+        let (col_a, val_a) = a[ia];
+        let (col_b, val_b) = b[ib];
+        match col_a.cmp(&col_b) {
+            std::cmp::Ordering::Equal => {
+                if col_a != skip_col {
+                    let diff = val_a - val_b;
+                    sum += diff * diff;
+                    count += 1;
+                }
+                ia += 1;
+                ib += 1;
+            }
+            std::cmp::Ordering::Less => ia += 1,
+            std::cmp::Ordering::Greater => ib += 1,
         }
     }
+
     if count == 0 {
         None
     } else {
@@ -798,8 +955,7 @@ mod tests {
             vec![Some(0.4), None, None],
         ];
         let motifs = vec!["A".into(), "B".into(), "C".into()];
-        let (filtered, names, dropped) =
-            retain_dense_features(rows, motifs, 0.5).unwrap();
+        let (filtered, names, dropped) = retain_dense_features(rows, motifs, 0.5).unwrap();
         assert_eq!(names, vec!["A", "C"]);
         assert_eq!(filtered[0].len(), 2);
         assert_eq!(dropped, 1);

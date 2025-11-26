@@ -12,6 +12,11 @@ samples:
     reference: /home/shei/methylation_phasing/methylation_phasing_data/ZymoFecal/ZymoFecal_contig_1330.fasta
     contig_bins: config/contig_bins/ZymoFecal_contig_1330.tsv
     contig: contig_1330
+  ZymoFecal_contig_mmlong2_lite_u26020317ctg:
+    bam: /home/shei/methylation_phasing/methylation_phasing_data/ZymoFecal/PAW77640_pass_cddc0ba5_00000000__contig_mmlong2_lite_u26020317ctg.bam
+    reference: /home/shei/methylation_phasing/methylation_phasing_data/ZymoFecal/mmlong2_lite_u26020317ctg.fasta
+    contig_bins: /home/shei/methylation_phasing/methylation_phasing_data/ZymoFecal/contig_bin_mmlong2_new_contig_u26020317.tsv
+    contig: mmlong2_lite_u26020317ctg
   # Escherichia_coli_mixed_50-50:
   #   bam: /home/shei/methylation_phasing/methylation_phasing_data/ecoli_mergin/merged.sorted.bam
   #   reference: /home/shei/methylation_phasing/methylation_phasing_data/Escherichia-coli_DSMZ18039/flye/assembly.fasta

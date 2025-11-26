@@ -3,3 +3,4 @@ results*
 workflow.done
 .snakemake
 .cache
+AGENTS.md
