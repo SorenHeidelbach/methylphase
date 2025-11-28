@@ -200,7 +200,7 @@ fn write_vcf(
 
 fn write_headers<W: Write>(writer: &mut W, table: &SiteTable, sample_name: &str) -> Result<()> {
     writeln!(writer, "##fileformat=VCFv4.3")?;
-    writeln!(writer, "##source=methylation_phasing")?;
+    writeln!(writer, "##source=methylphase")?;
     for contig in table.contigs() {
         writeln!(writer, "##contig=<ID={contig}>")?;
     }

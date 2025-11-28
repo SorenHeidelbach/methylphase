@@ -139,7 +139,7 @@ rule extract:
     shell:
         """
         mkdir -p {params.fastq_dir} $(dirname {output.per})
-        methylation_phasing extract "{input.bam}" --motif-file "{input.motif_file}" \
+        methylphase extract "{input.bam}" --motif-file "{input.motif_file}" \
             --per-read-tsv {output.per} --aggregate-tsv {output.agg} \
             --fastq-dir {params.fastq_dir}
         touch {output.flag}
@@ -161,7 +161,7 @@ checkpoint split_reads:
     shell:
         """
         mkdir -p {params.outdir}
-        methylation_phasing split-reads "{input.bam}" --output-dir {params.outdir} \
+        methylphase split-reads "{input.bam}" --output-dir {params.outdir} \
             --motif-file "{input.motif_file}" {params.flag}
         touch {output.clusters_done}
         """
@@ -274,7 +274,7 @@ rule longitudinal:
     shell:
         """
         mkdir -p $(dirname {output})
-        methylation_phasing longitudinal "{input.bam}" --output-dir $(dirname {output}) \
+        methylphase longitudinal "{input.bam}" --output-dir $(dirname {output}) \
             --motif-file "{input.motif_file}"
         """
 
@@ -288,7 +288,7 @@ rule vcf:
     shell:
         """
         mkdir -p $(dirname {output})
-        methylation_phasing vcf "{input.bam}" --output {output} --motif-file "{input.motif_file}" --plain-output
+        methylphase vcf "{input.bam}" --output {output} --motif-file "{input.motif_file}" --plain-output
         """
 
 
@@ -306,7 +306,7 @@ rule impute_bam:
     shell:
         """
         mkdir -p $(dirname {output.bam})
-        methylation_phasing impute-bam "{input.bam}" --methylation-threshold {params.threshold} \
+        methylphase impute-bam "{input.bam}" --methylation-threshold {params.threshold} \
             --output {output.bam} --summary {output.summary} --motif-file "{input.motif_file}"
         samtools index {output.bam}
         """

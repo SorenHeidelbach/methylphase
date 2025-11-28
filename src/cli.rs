@@ -4,7 +4,7 @@ use std::path::PathBuf;
 /// Command-line interface definition.
 #[derive(Debug, Parser)]
 #[command(
-    name = "methylation_phasing",
+    name = "methylphase",
     version,
     about = "Tools for BAM-driven methylation phasing"
 )]

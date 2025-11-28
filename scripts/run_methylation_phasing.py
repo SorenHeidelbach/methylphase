@@ -19,9 +19,7 @@ def run_cmd(cmd: List[str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Run methylation_phasing impute/VCF steps followed by Whatshap polyphase."
-        )
+        description="Run methylphase impute/VCF steps followed by Whatshap polyphase."
     )
     parser.add_argument(
         "--bam",
@@ -50,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--motif-file",
-        help="Optional TSV/CSV describing motifs (same format as methylation_phasing).",
+        help="Optional TSV/CSV describing motifs (same format as methylphase).",
     )
     parser.add_argument(
         "--threshold",
@@ -108,7 +106,7 @@ def main() -> int:
 
     # Step 1: impute high-confidence methylation into the BAM.
     impute_cmd = [
-        "methylation_phasing",
+        "methylphase",
         "impute-bam",
         "--methylation-threshold",
         str(args.threshold),
@@ -120,7 +118,7 @@ def main() -> int:
 
     # Step 2: emit methylation VCF.
     vcf_cmd = [
-        "methylation_phasing",
+        "methylphase",
         "vcf",
         "--output",
         str(vcf_path),

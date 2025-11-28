@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
-use methylation_phasing::{
+use methylphase::{
     cli::{Cli, Command, ContigSelection},
     run,
 };

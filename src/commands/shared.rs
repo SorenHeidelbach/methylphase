@@ -17,7 +17,7 @@ pub fn load_motif_queries(
     }
 
     eprintln!(
-        "methylation_phasing: loaded {} motif(s): {}",
+        "methylphase: loaded {} motif(s): {}",
         motifs.len(),
         motifs.join(",")
     );
