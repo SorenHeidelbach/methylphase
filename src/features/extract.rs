@@ -74,10 +74,20 @@ pub fn process_read_with_motifs<S: ExtractionSink>(
         let motif_position = motif.mod_position();
         let mod_label = motif.mod_label();
         let motif_offset = motif.mod_position();
+        let motif_len = motif.motif().len();
+        if motif_len == 0 {
+            continue;
+        }
+        let reverse_offset = motif_len - 1 - motif_offset;
         let matches = motif.matches(read.sequence());
 
         for start in matches {
-            let mod_pos = start + motif_offset;
+            let mod_offset = if matches!(read.strand, Some(Strand::Reverse)) {
+                reverse_offset
+            } else {
+                motif_offset
+            };
+            let mod_pos = start + mod_offset;
             let Some(call) = read.modification_at(mod_pos, mod_label) else {
                 continue;
             };
@@ -365,5 +375,55 @@ fn percentile(values: &[f32], fraction: f64) -> f64 {
         let upper = f64::from(values[upper_idx]);
         let weight = scaled - lower_idx as f64;
         lower + (upper - lower) * weight
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{ModificationCall, ModificationKind, ReadRecord, Strand};
+
+    #[derive(Default)]
+    struct TestSink {
+        per_read: Vec<PerReadRecord<'static>>,
+    }
+
+    impl ExtractionSink for TestSink {
+        fn record_per_read(&mut self, record: PerReadRecord<'_>) -> Result<()> {
+            self.per_read.push(record.into_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn reverse_reads_use_mirrored_motif_offsets() -> Result<()> {
+        let read = ReadRecord::new(
+            "rev".to_string(),
+            Some("ctg".to_string()),
+            Some(Strand::Reverse),
+            b"GATC".to_vec(),
+            vec![ModificationCall {
+                position: 2,
+                probability: Some(0.9),
+                methylated: true,
+                kind: ModificationKind {
+                    canonical_base: b'A',
+                    label: "6mA".to_string(),
+                    code: "a".to_string(),
+                    strand: Strand::Reverse,
+                },
+            }],
+            Vec::new(),
+            vec![Some(0); 4],
+        );
+        let motif = MotifQuery::parse("GATC_6mA_1")?;
+        let mut sink = TestSink::default();
+        let mut scratch = MotifScratch::new(1);
+
+        process_read_with_motifs(&read, &[motif], &mut sink, &mut scratch)?;
+        assert_eq!(sink.per_read.len(), 1);
+        assert_eq!(sink.per_read[0].read_position, 2);
+        assert_eq!(sink.per_read[0].probability, Some(0.9));
+        Ok(())
     }
 }

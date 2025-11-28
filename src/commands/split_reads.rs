@@ -1,5 +1,6 @@
 use crate::{
     commands::shared,
+    cli::ClusterAlgorithm,
     core::{MotifQuery, ReadRecord},
     features::extract::{
         self, AggregateRecord, ExtractionSink, FastqRecord, MotifSummaryRecord, PerReadRecord,
@@ -15,6 +16,7 @@ use noodles_bgzf as bgzf;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::{
     collections::{hash_map::Entry, HashMap},
+    f64::consts::PI,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -35,6 +37,7 @@ pub fn run(
     min_samples: Option<usize>,
     emit_fastq: bool,
     threads: usize,
+    cluster_algorithm: ClusterAlgorithm,
     bin_ids: Option<Vec<String>>,
     contigs: Vec<String>,
 ) -> Result<()> {
@@ -143,6 +146,7 @@ pub fn run(
     );
     let assignments = cluster_reads(
         &imputed_features,
+        cluster_algorithm,
         effective_min_cluster_size,
         effective_min_samples,
     )?;
@@ -482,6 +486,23 @@ impl<W: ExtractionSink> ExtractionSink for ClusterSink<W> {
 
 fn cluster_reads(
     data: &[Vec<f64>],
+    algorithm: ClusterAlgorithm,
+    min_cluster_size: usize,
+    min_samples: usize,
+) -> Result<Vec<i32>> {
+    match algorithm {
+        ClusterAlgorithm::Hdbscan => {
+            cluster_with_hdbscan(data, min_cluster_size, min_samples)
+        }
+        ClusterAlgorithm::Gmm => cluster_with_gmm(data, min_cluster_size),
+        ClusterAlgorithm::Agglomerative => {
+            cluster_with_agglomerative(data, min_cluster_size)
+        }
+    }
+}
+
+fn cluster_with_hdbscan(
+    data: &[Vec<f64>],
     min_cluster_size: usize,
     min_samples: usize,
 ) -> Result<Vec<i32>> {
@@ -502,6 +523,452 @@ fn cluster_reads(
     clusterer
         .cluster()
         .map_err(|e| anyhow!("HDBSCAN clustering failed: {e}"))
+}
+
+fn cluster_with_gmm(data: &[Vec<f64>], min_cluster_size: usize) -> Result<Vec<i32>> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    if data.len() == 1 {
+        return Ok(vec![0]);
+    }
+    let max_components = determine_max_components(data.len(), min_cluster_size);
+    if max_components < 2 {
+        return Ok(vec![0; data.len()]);
+    }
+    let mut best_labels: Option<Vec<i32>> = None;
+    let mut best_score = f64::NEG_INFINITY;
+    let mut fallback: Option<Vec<i32>> = None;
+    for components in 2..=max_components {
+        let model = fit_gmm_diag(data, components, 100, 1e-3)?;
+        let labels = assign_gmm_labels(&model, data);
+        if fallback.is_none() {
+            fallback = Some(labels.clone());
+        }
+        if let Some(score) = silhouette_score(data, &labels) {
+            if score > best_score {
+                best_score = score;
+                best_labels = Some(labels);
+            }
+        }
+    }
+    if let Some(labels) = best_labels {
+        Ok(labels)
+    } else if let Some(labels) = fallback {
+        Ok(labels)
+    } else {
+        Ok(vec![0; data.len()])
+    }
+}
+
+fn cluster_with_agglomerative(
+    data: &[Vec<f64>],
+    min_cluster_size: usize,
+) -> Result<Vec<i32>> {
+    let n = data.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    if n == 1 {
+        return Ok(vec![0]);
+    }
+    let mut target_clusters = determine_max_components(n, min_cluster_size);
+    if target_clusters == 0 {
+        target_clusters = 1;
+    }
+    target_clusters = target_clusters.min(n).max(1);
+    if target_clusters <= 1 {
+        return Ok(vec![0; n]);
+    }
+    let mst_edges = build_mst(data);
+    Ok(assign_clusters_from_mst(n, &mst_edges, target_clusters))
+}
+
+fn determine_max_components(read_count: usize, min_cluster_size: usize) -> usize {
+    if read_count <= 1 {
+        return read_count;
+    }
+    let denom = min_cluster_size.max(1);
+    let approx = (read_count / denom).max(2);
+    approx.min(read_count).min(8)
+}
+
+fn silhouette_score(data: &[Vec<f64>], labels: &[i32]) -> Option<f64> {
+    if data.len() < 2 {
+        return None;
+    }
+    let mut clusters: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (idx, label) in labels.iter().enumerate() {
+        clusters.entry(*label).or_default().push(idx);
+    }
+    if clusters.len() < 2 {
+        return None;
+    }
+    let mut total = 0.0;
+    for (idx, sample) in data.iter().enumerate() {
+        let cluster_id = labels[idx];
+        let members = clusters.get(&cluster_id)?;
+        let a = if members.len() <= 1 {
+            0.0
+        } else {
+            let mut sum = 0.0;
+            for &other in members {
+                if other == idx {
+                    continue;
+                }
+                sum += euclidean_distance(sample, &data[other]);
+            }
+            sum / (members.len() as f64 - 1.0)
+        };
+        let mut b = f64::INFINITY;
+        for (other_id, other_members) in clusters.iter() {
+            if *other_id == cluster_id {
+                continue;
+            }
+            let mut sum = 0.0;
+            for &other in other_members {
+                sum += euclidean_distance(sample, &data[other]);
+            }
+            let avg = sum / other_members.len() as f64;
+            if avg < b {
+                b = avg;
+            }
+        }
+        let s = if a == 0.0 && b == 0.0 {
+            0.0
+        } else {
+            (b - a) / b.max(a)
+        };
+        total += s;
+    }
+    Some(total / data.len() as f64)
+}
+
+fn euclidean_distance(a: &[f64], b: &[f64]) -> f64 {
+    let mut sum = 0.0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let diff = x - y;
+        sum += diff * diff;
+    }
+    sum.sqrt()
+}
+
+#[derive(Clone)]
+struct GmmComponent {
+    weight: f64,
+    mean: Vec<f64>,
+    variance: Vec<f64>,
+}
+
+fn fit_gmm_diag(
+    data: &[Vec<f64>],
+    component_count: usize,
+    max_iters: usize,
+    tol: f64,
+) -> Result<Vec<GmmComponent>> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dims = data[0].len();
+    if dims == 0 {
+        return Ok(vec![GmmComponent {
+            weight: 1.0,
+            mean: Vec::new(),
+            variance: Vec::new(),
+        }]);
+    }
+    let global_variance = compute_global_variance(data);
+    let mut components = initialize_gmm_components(data, component_count, &global_variance);
+    let mut prev_log_likelihood = f64::NEG_INFINITY;
+    for _ in 0..max_iters {
+        let (responsibilities, log_likelihood) = expectation_step(data, &components);
+        let (updated_components, moved) =
+            maximization_step(data, &responsibilities, &global_variance);
+        components = updated_components;
+        if (log_likelihood - prev_log_likelihood).abs() < tol && !moved {
+            break;
+        }
+        prev_log_likelihood = log_likelihood;
+    }
+    Ok(components)
+}
+
+fn initialize_gmm_components(
+    data: &[Vec<f64>],
+    component_count: usize,
+    global_variance: &[f64],
+) -> Vec<GmmComponent> {
+    let mut components = Vec::with_capacity(component_count);
+    let n = data.len();
+    if n == 0 {
+        return components;
+    }
+    let step = (n / component_count).max(1);
+    for comp_idx in 0..component_count {
+        let index = (comp_idx * step) % n;
+        let point = data[index].clone();
+        components.push(GmmComponent {
+            weight: 1.0 / component_count as f64,
+            mean: point,
+            variance: global_variance.to_vec(),
+        });
+    }
+    components
+}
+
+fn expectation_step(
+    data: &[Vec<f64>],
+    components: &[GmmComponent],
+) -> (Vec<Vec<f64>>, f64) {
+    let mut responsibilities = vec![vec![0.0; components.len()]; data.len()];
+    let mut log_likelihood = 0.0;
+    for (idx, sample) in data.iter().enumerate() {
+        let mut log_probs = vec![0.0; components.len()];
+        for (comp_idx, component) in components.iter().enumerate() {
+            log_probs[comp_idx] = log_gaussian_diag(sample, component);
+        }
+        let log_sum = log_sum_exp(&log_probs);
+        log_likelihood += log_sum;
+        for comp_idx in 0..components.len() {
+            responsibilities[idx][comp_idx] = (log_probs[comp_idx] - log_sum).exp();
+        }
+    }
+    (responsibilities, log_likelihood)
+}
+
+fn maximization_step(
+    data: &[Vec<f64>],
+    responsibilities: &[Vec<f64>],
+    global_variance: &[f64],
+) -> (Vec<GmmComponent>, bool) {
+    let n = data.len();
+    let k = responsibilities.first().map(|r| r.len()).unwrap_or(0);
+    let dims = data.first().map(|d| d.len()).unwrap_or(0);
+    let mut nk = vec![0.0f64; k];
+    let mut means = vec![vec![0.0f64; dims]; k];
+    for (row_idx, sample) in data.iter().enumerate() {
+        for comp_idx in 0..k {
+            let r = responsibilities[row_idx][comp_idx];
+            nk[comp_idx] += r;
+            for dim in 0..dims {
+                means[comp_idx][dim] += r * sample[dim];
+            }
+        }
+    }
+
+    let mut moved = false;
+    for comp_idx in 0..k {
+        if nk[comp_idx] > 1e-8 {
+            for dim in 0..dims {
+                means[comp_idx][dim] /= nk[comp_idx];
+            }
+        } else {
+            moved = true;
+            means[comp_idx] = data[comp_idx % data.len()].clone();
+            nk[comp_idx] = 1e-6;
+        }
+    }
+
+    let mut variances = vec![vec![0.0f64; dims]; k];
+    for (row_idx, sample) in data.iter().enumerate() {
+        for comp_idx in 0..k {
+            let r = responsibilities[row_idx][comp_idx];
+            for dim in 0..dims {
+                let diff = sample[dim] - means[comp_idx][dim];
+                variances[comp_idx][dim] += r * diff * diff;
+            }
+        }
+    }
+
+    let mut components = Vec::with_capacity(k);
+    for comp_idx in 0..k {
+        let mut component_variance = vec![0.0f64; dims];
+        for dim in 0..dims {
+            let mut value = variances[comp_idx][dim] / nk[comp_idx];
+            if !value.is_finite() || value < 1e-6 {
+                value = global_variance[dim];
+            }
+            component_variance[dim] = value;
+        }
+        let weight = (nk[comp_idx] / n as f64).max(1e-6);
+        components.push(GmmComponent {
+            weight,
+            mean: means[comp_idx].clone(),
+            variance: component_variance,
+        });
+    }
+    (components, moved)
+}
+
+fn assign_gmm_labels(components: &[GmmComponent], data: &[Vec<f64>]) -> Vec<i32> {
+    let mut labels = Vec::with_capacity(data.len());
+    for sample in data {
+        let mut best_idx = 0usize;
+        let mut best_score = f64::NEG_INFINITY;
+        for (comp_idx, component) in components.iter().enumerate() {
+            let score = log_gaussian_diag(sample, component);
+            if score > best_score {
+                best_score = score;
+                best_idx = comp_idx;
+            }
+        }
+        labels.push(best_idx as i32);
+    }
+    labels
+}
+
+fn compute_global_variance(data: &[Vec<f64>]) -> Vec<f64> {
+    let dims = data[0].len();
+    let mut mean = vec![0.0f64; dims];
+    for sample in data {
+        for dim in 0..dims {
+            mean[dim] += sample[dim];
+        }
+    }
+    for dim in 0..dims {
+        mean[dim] /= data.len() as f64;
+    }
+    let mut variance = vec![0.0f64; dims];
+    for sample in data {
+        for dim in 0..dims {
+            let diff = sample[dim] - mean[dim];
+            variance[dim] += diff * diff;
+        }
+    }
+    for dim in 0..dims {
+        variance[dim] = (variance[dim] / data.len() as f64).max(1e-6);
+    }
+    variance
+}
+
+fn log_gaussian_diag(sample: &[f64], component: &GmmComponent) -> f64 {
+    let mut log_prob = component.weight.ln();
+    let ln_norm = (2.0 * PI).ln();
+    for dim in 0..sample.len() {
+        let var = component.variance[dim].max(1e-6);
+        let diff = sample[dim] - component.mean[dim];
+        log_prob += -0.5 * ((diff * diff) / var + var.ln() + ln_norm);
+    }
+    log_prob
+}
+
+fn log_sum_exp(values: &[f64]) -> f64 {
+    let max = values
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !max.is_finite() {
+        return max;
+    }
+    let sum: f64 = values.iter().map(|value| (value - max).exp()).sum();
+    max + sum.ln()
+}
+
+fn build_mst(data: &[Vec<f64>]) -> Vec<(usize, usize, f64)> {
+    let n = data.len();
+    let mut in_tree = vec![false; n];
+    let mut min_dist = vec![f64::INFINITY; n];
+    let mut parent = vec![usize::MAX; n];
+    let mut edges = Vec::with_capacity(n.saturating_sub(1));
+    in_tree[0] = true;
+    for v in 1..n {
+        min_dist[v] = euclidean_distance(&data[0], &data[v]);
+        parent[v] = 0;
+    }
+    for _ in 1..n {
+        let mut next = None;
+        for v in 0..n {
+            if !in_tree[v] && (next.is_none() || min_dist[v] < min_dist[next.unwrap()]) {
+                next = Some(v);
+            }
+        }
+        let Some(u) = next else {
+            break;
+        };
+        in_tree[u] = true;
+        edges.push((parent[u], u, min_dist[u]));
+        for v in 0..n {
+            if in_tree[v] || u == v {
+                continue;
+            }
+            let dist = euclidean_distance(&data[u], &data[v]);
+            if dist < min_dist[v] {
+                min_dist[v] = dist;
+                parent[v] = u;
+            }
+        }
+    }
+    edges
+}
+
+fn assign_clusters_from_mst(
+    node_count: usize,
+    edges: &[(usize, usize, f64)],
+    cluster_count: usize,
+) -> Vec<i32> {
+    if node_count == 0 {
+        return Vec::new();
+    }
+    if cluster_count <= 1 {
+        return vec![0; node_count];
+    }
+    let mut sorted = edges.to_vec();
+    sorted.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    let skip = cluster_count.saturating_sub(1).min(sorted.len());
+    let mut disjoint = DisjointSet::new(node_count);
+    for (idx, (u, v, _)) in sorted.iter().enumerate() {
+        if idx < skip {
+            continue;
+        }
+        disjoint.union(*u, *v);
+    }
+    let mut cluster_map: HashMap<usize, i32> = HashMap::new();
+    let mut next_id = 0i32;
+    let mut labels = vec![0i32; node_count];
+    for node in 0..node_count {
+        let root = disjoint.find(node);
+        let entry = cluster_map.entry(root).or_insert_with(|| {
+            let id = next_id;
+            next_id += 1;
+            id
+        });
+        labels[node] = *entry;
+    }
+    labels
+}
+
+struct DisjointSet {
+    parent: Vec<usize>,
+    size: Vec<usize>,
+}
+
+impl DisjointSet {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            size: vec![1; n],
+        }
+    }
+
+    fn find(&mut self, x: usize) -> usize {
+        if self.parent[x] != x {
+            self.parent[x] = self.find(self.parent[x]);
+        }
+        self.parent[x]
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let mut root_a = self.find(a);
+        let mut root_b = self.find(b);
+        if root_a == root_b {
+            return;
+        }
+        if self.size[root_a] < self.size[root_b] {
+            std::mem::swap(&mut root_a, &mut root_b);
+        }
+        self.parent[root_b] = root_a;
+        self.size[root_a] += self.size[root_b];
+    }
 }
 fn write_clustering_results(
     output_dir: &Path,
@@ -917,6 +1384,7 @@ fn row_distance_without_column(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::ClusterAlgorithm;
 
     #[test]
     fn impute_features_fills_missing_values() {
@@ -941,9 +1409,35 @@ mod tests {
             vec![5.0, 5.0],
             vec![5.1, 5.1],
         ];
-        let labels = cluster_reads(&data, 2, 2).expect("clustering failed");
-        assert_eq!(labels.len(), 4);
-        assert!(labels[0] != labels[2]);
+        let hdbscan = cluster_reads(
+            &data,
+            ClusterAlgorithm::Hdbscan,
+            2,
+            2,
+        )
+        .expect("hdbscan clustering failed");
+        assert_eq!(hdbscan.len(), 4);
+        assert!(hdbscan[0] != hdbscan[2]);
+
+        let gmm = cluster_reads(
+            &data,
+            ClusterAlgorithm::Gmm,
+            2,
+            2,
+        )
+        .expect("gmm clustering failed");
+        assert_eq!(gmm.len(), 4);
+        assert!(gmm[0] != gmm[2]);
+
+        let agg = cluster_reads(
+            &data,
+            ClusterAlgorithm::Agglomerative,
+            2,
+            2,
+        )
+        .expect("agglomerative clustering failed");
+        assert_eq!(agg.len(), 4);
+        assert!(agg[0] != agg[2]);
     }
 
     #[test]

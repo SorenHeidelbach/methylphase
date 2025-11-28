@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Command-line interface definition.
@@ -187,6 +187,14 @@ pub enum Command {
         #[arg(long = "threads", default_value_t = 1)]
         threads: usize,
 
+        /// Clustering algorithm to use for assigning reads to groups.
+        #[arg(
+            long = "cluster-algorithm",
+            value_enum,
+            default_value_t = ClusterAlgorithm::Hdbscan
+        )]
+        cluster_algorithm: ClusterAlgorithm,
+
         #[command(flatten)]
         contig_args: ContigSelection,
     },
@@ -276,4 +284,11 @@ pub enum Command {
         #[command(flatten)]
         contig_args: ContigSelection,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ClusterAlgorithm {
+    Hdbscan,
+    Gmm,
+    Agglomerative,
 }

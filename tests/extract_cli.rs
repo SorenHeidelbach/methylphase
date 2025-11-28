@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use methylphase::{
-    cli::{Cli, Command, ContigSelection},
+    cli::{Cli, Command, ContigSelection, ClusterAlgorithm},
     run,
 };
 use noodles_bam as bam;
@@ -118,6 +118,7 @@ fn split_reads_command_clusters_and_writes_fastqs() -> Result<()> {
             min_samples: Some(1),
             emit_fastq: true,
             threads: 1,
+            cluster_algorithm: ClusterAlgorithm::Hdbscan,
             contig_args: ContigSelection::default(),
         },
     };
@@ -155,6 +156,7 @@ fn split_reads_supports_multiple_threads() -> Result<()> {
             min_samples: Some(1),
             emit_fastq: true,
             threads: 2,
+            cluster_algorithm: ClusterAlgorithm::Hdbscan,
             contig_args: ContigSelection::default(),
         },
     };
@@ -184,6 +186,7 @@ fn split_reads_imputes_missing_data() -> Result<()> {
             min_samples: Some(1),
             emit_fastq: true,
             threads: 1,
+            cluster_algorithm: ClusterAlgorithm::Hdbscan,
             contig_args: ContigSelection::default(),
         },
     };
@@ -249,7 +252,7 @@ fn extract_handles_reverse_read() -> Result<()> {
     let cli = Cli {
         command: Command::Extract {
             bam: bam_path,
-            motifs: vec!["GATC_6mA_1".to_string()],
+            motifs: vec!["GAAG_6mA_1".to_string()],
             motif_file: None,
             motif_summary_tsv: None,
             fastq_dir: None,
@@ -306,6 +309,51 @@ fn extract_filters_motifs_per_bin() -> Result<()> {
 
     let bin_b = fs::read_to_string(output_dir.join("binB").join("per_read.tsv"))?;
     assert!(!bin_b.contains("GATC_6mA_1"));
+    Ok(())
+}
+
+#[test]
+fn extract_reports_reverse_motif_offsets() -> Result<()> {
+    let tmp = tempdir()?;
+    let bam_path = tmp.path().join("forward_reverse_offsets.bam");
+    write_forward_reverse_offsets_bam(&bam_path)?;
+    let out_dir = tmp.path().join("forward_reverse_offsets_out");
+
+    let cli = Cli {
+        command: Command::Extract {
+            bam: bam_path,
+            motifs: vec!["GAAG_6mA_1".to_string()],
+            motif_file: None,
+            motif_summary_tsv: None,
+            fastq_dir: None,
+            sequence_fallback: None,
+            sequence_index: None,
+            output_dir: out_dir.clone(),
+            contig_args: ContigSelection::default(),
+        },
+    };
+
+    run(cli)?;
+
+    let per_path = out_dir.join("per_read.tsv");
+    let agg_path = out_dir.join("aggregate.tsv");
+    let per_contents = fs::read_to_string(per_path)?;
+    let agg_contents = fs::read_to_string(agg_path)?;
+
+    let expected_per = "\
+read_id\tcontig\tstrand\tmotif\tmotif_start\tmotif_position\tread_position\tref_position\tprobability\tmethylated\tmod_label
+read_fwd\tctg\t+\tGAAG_6mA_1\t0\t1\t1\t2\t0.7843\t1\t6mA
+read_rev\tctg\t-\tGAAG_6mA_1\t0\t1\t2\t3\t0.7843\t1\t6mA
+";
+
+    let expected_agg = "\
+read_id\tmotif\tcall_count\tmean_probability\tquantile_0\tquantile_10\tquantile_20\tquantile_30\tquantile_40\tquantile_50\tquantile_60\tquantile_70\tquantile_80\tquantile_90\tquantile_100
+read_fwd\tGAAG_6mA_1\t1\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843
+read_rev\tGAAG_6mA_1\t1\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843\t0.7843
+";
+
+    assert_eq!(per_contents, expected_per);
+    assert_eq!(agg_contents, expected_agg);
     Ok(())
 }
 
@@ -445,7 +493,35 @@ fn write_reverse_bam(path: &Path) -> Result<()> {
     const SAM_TEMPLATE: &str = "\
 @HD\tVN:1.6\tSO:coordinate
 @SQ\tSN:ctg\tLN:50
-read_rev\t16\tctg\t1\t60\t4M\t*\t0\t0\tGATC\tFFFF\tMM:Z:A+a,0;\tML:B:C,200
+read_rev\t16\tctg\t1\t60\t4M\t*\t0\t0\tGAAG\tFFFF\tMM:Z:A-a,0;\tML:B:C,200
+";
+
+    let mut reader = sam::io::Reader::new(Cursor::new(SAM_TEMPLATE.as_bytes().to_vec()));
+    let header = reader.read_header()?;
+
+    let file = File::create(path)?;
+    let mut writer = bam::io::Writer::new(file);
+    writer.write_header(&header)?;
+
+    let mut record = sam::Record::default();
+    while reader.read_record(&mut record)? != 0 {
+        writer.write_alignment_record(&header, &record)?;
+    }
+
+    writer.try_finish()?;
+    let index = bam::fs::index(path)?;
+    let mut bai_path = OsString::from(path.as_os_str());
+    bai_path.push(".bai");
+    bam::bai::fs::write(PathBuf::from(bai_path), &index)?;
+    Ok(())
+}
+
+fn write_forward_reverse_offsets_bam(path: &Path) -> Result<()> {
+    const SAM_TEMPLATE: &str = "\
+@HD\tVN:1.6\tSO:coordinate
+@SQ\tSN:ctg\tLN:50
+read_fwd\t0\tctg\t1\t60\t4M\t*\t0\t0\tGAAG\tFFFF\tMM:Z:A+a,0;\tML:B:C,200
+read_rev\t16\tctg\t1\t60\t4M\t*\t0\t0\tGAAG\tFFFF\tMM:Z:A-a,0;\tML:B:C,200
 ";
 
     let mut reader = sam::io::Reader::new(Cursor::new(SAM_TEMPLATE.as_bytes().to_vec()));

@@ -114,6 +114,7 @@ pub fn run(cli: Cli) -> Result<()> {
             min_samples,
             emit_fastq,
             threads,
+            cluster_algorithm,
             contig_args,
         } => run_with_bins("split_reads", contig_args, move |bin, contigs| {
             let bam = bam.clone();
@@ -137,6 +138,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 min_samples,
                 emit_fastq,
                 threads,
+                cluster_algorithm,
                 bin_ids,
                 contigs,
             )
