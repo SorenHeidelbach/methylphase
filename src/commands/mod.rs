@@ -8,7 +8,9 @@ pub mod shared;
 pub mod split_reads;
 pub mod vcf;
 
-use crate::cli::{Cli, Command, ContigSelection};
+use crate::cli::{Cli, Command, ContigSelection, UtilsCommand};
+use crate::typing::cli as typing_cli;
+use crate::typing::entry as typing_entry;
 use anyhow::Result;
 use std::{
     collections::HashSet,
@@ -19,20 +21,7 @@ use self::binning::{BinAssignment, ContigBins};
 
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Contigs { bam, contig_args } => {
-            run_with_bins("contigs", contig_args, move |_bin, contigs| {
-                let bam = bam.clone();
-                contigs::run(bam, contigs)
-            })
-        }
-        Command::Reads {
-            bam,
-            contig_args,
-            limit,
-        } => run_with_bins("reads", contig_args, move |_bin, contigs| {
-            let bam = bam.clone();
-            reads::run(bam, contigs, limit)
-        }),
+        Command::PhaseVariants(args) => typing_entry::run(typing_cli::Commands::Run(args)),
         Command::Extract {
             bam,
             motifs,
@@ -62,40 +51,6 @@ pub fn run(cli: Cli) -> Result<()> {
                 motif_file,
                 motif_summary_tsv,
                 fastq_dir,
-                sequence_fallback,
-                sequence_index,
-                output_dir,
-                bin_ids,
-                contigs,
-            )
-        }),
-        Command::Longitudinal {
-            bam,
-            motifs,
-            motif_file,
-            block_size,
-            methylation_threshold,
-            sequence_fallback,
-            sequence_index,
-            output_dir,
-            contig_args,
-        } => run_with_bins("longitudinal", contig_args, move |bin, contigs| {
-            let bam = bam.clone();
-            let motifs = motifs.clone();
-            let motif_file = motif_file.clone();
-            let sequence_fallback = sequence_fallback.clone();
-            let sequence_index = sequence_index.clone();
-            let mut output_dir = output_dir.clone();
-            if let Some(bin) = bin {
-                output_dir = apply_bin_directory(&output_dir, bin);
-            }
-            let bin_ids = bin.map(bin_identifier_values);
-            longitudinal::run(
-                bam,
-                motifs,
-                motif_file,
-                block_size,
-                methylation_threshold,
                 sequence_fallback,
                 sequence_index,
                 output_dir,
@@ -143,76 +98,127 @@ pub fn run(cli: Cli) -> Result<()> {
                 contigs,
             )
         }),
-        Command::Vcf {
-            bam,
-            motifs,
-            motif_file,
-            sequence_fallback,
-            sequence_index,
-            output,
-            sample_name,
-            methylation_threshold,
-            plain_output,
-            contig_args,
-        } => run_with_bins("vcf", contig_args, move |bin, contigs| {
-            let bam = bam.clone();
-            let motifs = motifs.clone();
-            let motif_file = motif_file.clone();
-            let sequence_fallback = sequence_fallback.clone();
-            let sequence_index = sequence_index.clone();
-            let mut output = output.clone();
-            if let Some(bin) = bin {
-                output = apply_bin_file(&output, bin);
+        Command::Typing { command } => typing_entry::run(command),
+        Command::Utils { command } => match command {
+            UtilsCommand::Contigs { bam, contig_args } => {
+                run_with_bins("contigs", contig_args, move |_bin, contigs| {
+                    let bam = bam.clone();
+                    contigs::run(bam, contigs)
+                })
             }
-            let bin_ids = bin.map(bin_identifier_values);
-            vcf::run(
+            UtilsCommand::Reads {
+                bam,
+                contig_args,
+                limit,
+            } => run_with_bins("reads", contig_args, move |_bin, contigs| {
+                let bam = bam.clone();
+                reads::run(bam, contigs, limit)
+            }),
+            UtilsCommand::Vcf {
                 bam,
                 motifs,
                 motif_file,
                 sequence_fallback,
                 sequence_index,
                 output,
-                sample_name.clone(),
+                sample_name,
                 methylation_threshold,
                 plain_output,
-                bin_ids,
-                contigs,
-            )
-        }),
-        Command::ImputeBam {
-            bam,
-            output,
-            methylation_threshold,
-            summary,
-            motifs,
-            motif_file,
-            impute_all,
-            contig_args,
-        } => run_with_bins("impute_bam", contig_args, move |bin, contigs| {
-            let bam = bam.clone();
-            let motifs = motifs.clone();
-            let motif_file = motif_file.clone();
-            let mut output_path = output.clone();
-            if let Some(bin) = bin {
-                output_path = apply_bin_file(&output_path, bin);
-            }
-            let summary_path = summary.as_ref().map(|path| match bin {
-                Some(bin) => apply_bin_file(path, bin),
-                None => path.clone(),
-            });
-            let bin_ids = bin.map(bin_identifier_values);
-            impute_bam::run(
+                contig_args,
+            } => run_with_bins("vcf", contig_args, move |bin, contigs| {
+                let bam = bam.clone();
+                let motifs = motifs.clone();
+                let motif_file = motif_file.clone();
+                let sequence_fallback = sequence_fallback.clone();
+                let sequence_index = sequence_index.clone();
+                let mut output = output.clone();
+                if let Some(bin) = bin {
+                    output = apply_bin_file(&output, bin);
+                }
+                let bin_ids = bin.map(bin_identifier_values);
+                vcf::run(
+                    bam,
+                    motifs,
+                    motif_file,
+                    sequence_fallback,
+                    sequence_index,
+                    output,
+                    sample_name.clone(),
+                    methylation_threshold,
+                    plain_output,
+                    bin_ids,
+                    contigs,
+                )
+            }),
+            UtilsCommand::ImputeBam {
                 bam,
-                output_path,
+                output,
                 methylation_threshold,
-                summary_path,
+                summary,
                 motifs,
                 motif_file,
                 impute_all,
-                bin_ids,
-                contigs,
-            )
-        }),
+                contig_args,
+            } => run_with_bins("impute_bam", contig_args, move |bin, contigs| {
+                let bam = bam.clone();
+                let motifs = motifs.clone();
+                let motif_file = motif_file.clone();
+                let mut output_path = output.clone();
+                if let Some(bin) = bin {
+                    output_path = apply_bin_file(&output_path, bin);
+                }
+                let summary_path = summary.as_ref().map(|path| match bin {
+                    Some(bin) => apply_bin_file(path, bin),
+                    None => path.clone(),
+                });
+                let bin_ids = bin.map(bin_identifier_values);
+                impute_bam::run(
+                    bam,
+                    output_path,
+                    methylation_threshold,
+                    summary_path,
+                    motifs,
+                    motif_file,
+                    impute_all,
+                    bin_ids,
+                    contigs,
+                )
+            }),
+            UtilsCommand::Longitudinal {
+                bam,
+                motifs,
+                motif_file,
+                block_size,
+                methylation_threshold,
+                sequence_fallback,
+                sequence_index,
+                output_dir,
+                contig_args,
+            } => run_with_bins("longitudinal", contig_args, move |bin, contigs| {
+                let bam = bam.clone();
+                let motifs = motifs.clone();
+                let motif_file = motif_file.clone();
+                let sequence_fallback = sequence_fallback.clone();
+                let sequence_index = sequence_index.clone();
+                let mut output_dir = output_dir.clone();
+                if let Some(bin) = bin {
+                    output_dir = apply_bin_directory(&output_dir, bin);
+                }
+                let bin_ids = bin.map(bin_identifier_values);
+                longitudinal::run(
+                    bam,
+                    motifs,
+                    motif_file,
+                    block_size,
+                    methylation_threshold,
+                    sequence_fallback,
+                    sequence_index,
+                    output_dir,
+                    bin_ids,
+                    contigs,
+                )
+            }),
+        },
     }
 }
 

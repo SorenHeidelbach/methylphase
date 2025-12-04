@@ -120,7 +120,7 @@ impl ExtractionSink for ExtractionWriter {
         let probability = record
             .probability
             .map(|p| format!("{:.4}", p))
-            .unwrap_or_else(|| "NA".to_string());
+            .unwrap_or_else(|| "0.0000".to_string());
         let methylated = if record.methylated { "1" } else { "0" };
 
         writeln!(

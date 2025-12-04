@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use methylphase::{
-    cli::{Cli, Command, ContigSelection, ClusterAlgorithm},
+    cli::{Cli, Command, ContigSelection, ClusterAlgorithm, UtilsCommand},
     run,
 };
 use noodles_bam as bam;
@@ -365,17 +365,19 @@ fn vcf_command_writes_records() -> Result<()> {
     let vcf_path = tmp.path().join("calls.vcf");
 
     let cli = Cli {
-        command: Command::Vcf {
-            bam: bam_path,
-            motifs: vec!["GATC_6mA_1".to_string()],
-            motif_file: None,
-            sequence_fallback: None,
-            sequence_index: None,
-            output: vcf_path.clone(),
-            sample_name: Some("sample1".to_string()),
-            methylation_threshold: 0.5,
-            plain_output: true,
-            contig_args: ContigSelection::default(),
+        command: Command::Utils {
+            command: UtilsCommand::Vcf {
+                bam: bam_path,
+                motifs: vec!["GATC_6mA_1".to_string()],
+                motif_file: None,
+                sequence_fallback: None,
+                sequence_index: None,
+                output: vcf_path.clone(),
+                sample_name: Some("sample1".to_string()),
+                methylation_threshold: 0.5,
+                plain_output: true,
+                contig_args: ContigSelection::default(),
+            },
         },
     };
 
@@ -398,15 +400,17 @@ fn impute_bam_rewrites_sequence_and_quality() -> Result<()> {
     let output_path = tmp.path().join("imputed.bam");
 
     let cli = Cli {
-        command: Command::ImputeBam {
-            bam: bam_path.clone(),
-            output: output_path.clone(),
-            methylation_threshold: 0.5,
-            summary: None,
-            motifs: Vec::new(),
-            motif_file: None,
-            impute_all: true,
-            contig_args: ContigSelection::default(),
+        command: Command::Utils {
+            command: UtilsCommand::ImputeBam {
+                bam: bam_path.clone(),
+                output: output_path.clone(),
+                methylation_threshold: 0.5,
+                summary: None,
+                motifs: Vec::new(),
+                motif_file: None,
+                impute_all: true,
+                contig_args: ContigSelection::default(),
+            },
         },
     };
 

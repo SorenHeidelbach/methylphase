@@ -15,7 +15,7 @@ use noodles_bam::{self as bam, Record};
 use noodles_bgzf as bgzf;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, HashSet},
     f64::consts::PI,
     fs::{self, File},
     io::{BufWriter, Write},
@@ -37,7 +37,7 @@ pub fn run(
     min_samples: Option<usize>,
     emit_fastq: bool,
     threads: usize,
-    cluster_algorithm: ClusterAlgorithm,
+        cluster_algorithm: ClusterAlgorithm,
     bin_ids: Option<Vec<String>>,
     contigs: Vec<String>,
 ) -> Result<()> {
@@ -115,6 +115,16 @@ pub fn run(
         processed_reads
     );
     let (reads, raw_features, sequences, motif_names) = sink.into_data();
+    let total_reads = reads.len();
+    let (reads, raw_features, sequences) =
+        drop_reads_without_features(reads, raw_features, sequences);
+    let dropped_reads = total_reads.saturating_sub(reads.len());
+    if dropped_reads > 0 {
+        eprintln!(
+            "split_reads: dropped {} reads with no motif calls before clustering",
+            dropped_reads
+        );
+    }
     if reads.is_empty() {
         bail!("no reads matched motifs; nothing to cluster");
     }
@@ -137,7 +147,8 @@ pub fn run(
     let imputed_features = impute_features(&raw_features);
 
     let effective_min_cluster_size = auto_min_cluster_size(reads.len());
-    let effective_min_samples = auto_hdbscan_min_samples(reads.len());
+    let effective_min_samples =
+        min_samples.unwrap_or_else(|| auto_hdbscan_min_samples(reads.len()));
     eprintln!(
         "split_reads: clustering {} reads (min_cluster_size={}, min_samples={})",
         reads.len(),
@@ -412,6 +423,7 @@ struct ClusterSink<W: ExtractionSink> {
     motif_index: HashMap<String, usize>,
     read_features: HashMap<String, Vec<Option<f64>>>,
     sequences: HashMap<String, SequenceInfo>,
+    hit_reads: HashSet<String>,
 }
 
 impl<W: ExtractionSink> ClusterSink<W> {
@@ -428,6 +440,7 @@ impl<W: ExtractionSink> ClusterSink<W> {
             motif_index,
             read_features: HashMap::new(),
             sequences: HashMap::new(),
+            hit_reads: HashSet::new(),
         }
     }
 
@@ -439,7 +452,12 @@ impl<W: ExtractionSink> ClusterSink<W> {
         HashMap<String, SequenceInfo>,
         Vec<String>,
     ) {
-        let mut read_ids: Vec<String> = self.read_features.keys().cloned().collect();
+        let mut read_ids: Vec<String> = self
+            .read_features
+            .keys()
+            .filter(|id| self.hit_reads.contains(*id))
+            .cloned()
+            .collect();
         read_ids.sort();
         let features = read_ids
             .iter()
@@ -451,6 +469,7 @@ impl<W: ExtractionSink> ClusterSink<W> {
 
 impl<W: ExtractionSink> ExtractionSink for ClusterSink<W> {
     fn record_per_read(&mut self, record: PerReadRecord<'_>) -> Result<()> {
+        self.hit_reads.insert(record.read_id.to_string());
         self.inner.record_per_read(record)
     }
 
@@ -1258,6 +1277,31 @@ fn retain_dense_features(
         .collect();
 
     Ok((filtered_rows, filtered_names, dropped))
+}
+
+fn drop_reads_without_features(
+    read_ids: Vec<String>,
+    features: Vec<Vec<Option<f64>>>,
+    mut sequences: HashMap<String, SequenceInfo>,
+) -> (
+    Vec<String>,
+    Vec<Vec<Option<f64>>>,
+    HashMap<String, SequenceInfo>,
+) {
+    let mut keep_ids = Vec::new();
+    let mut keep_features = Vec::new();
+    let mut keep_set = HashSet::new();
+
+    for (read_id, row) in read_ids.into_iter().zip(features.into_iter()) {
+        if row.iter().any(|v| v.is_some()) {
+            keep_set.insert(read_id.clone());
+            keep_ids.push(read_id);
+            keep_features.push(row);
+        }
+    }
+
+    sequences.retain(|id, _| keep_set.contains(id));
+    (keep_ids, keep_features, sequences)
 }
 
 fn impute_features(rows: &[Vec<Option<f64>>]) -> Vec<Vec<f64>> {
