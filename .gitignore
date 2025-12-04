@@ -4,3 +4,6 @@ workflow.done
 .snakemake
 .cache
 AGENTS.md
+# pixi environments
+.pixi/*
+!.pixi/config.toml

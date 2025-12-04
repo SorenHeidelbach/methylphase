@@ -1,0 +1,27 @@
+site_name: methylphase
+site_description: Documentation for the methylphase toolkit
+site_url: ""
+docs_dir: docs
+theme:
+  name: mkdocs
+
+nav:
+  - Home: index.md
+  - Overview: overview.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - Usage:
+      - Phase variants pipeline: usage/phase-variants.md
+      - Extract methylation calls: usage/extract.md
+      - Split reads: usage/split-reads.md
+      - Typing utilities: usage/typing.md
+      - Utility commands: usage/utils.md
+  - Examples:
+      - Example analysis: examples/analysis.md
+  - FAQ and troubleshooting: faq.md
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables

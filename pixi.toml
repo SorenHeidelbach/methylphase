@@ -1,0 +1,12 @@
+[workspace]
+authors = ["lx38ll <lx38ll@bio.aau.dk>"]
+channels = ["conda-forge"]
+name = "methylphase"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+mkdocs = ">=1.6.1,<2"
+mkdocs-material = ">=9.7.0,<10"
