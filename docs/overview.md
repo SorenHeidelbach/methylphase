@@ -1,3 +1,8 @@
+---
+layout: default
+title: Overview
+---
+
 # Overview
 
 methylphase is a toolkit for BAM-driven methylation phasing and typing. It extracts per-read methylation features from mod-tagged alignments (MM/ML tags), clusters reads by motif patterns, and aggregates or imputes results for downstream analyses.

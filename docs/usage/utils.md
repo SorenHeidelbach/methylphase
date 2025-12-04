@@ -1,3 +1,8 @@
+---
+layout: default
+title: Utility commands
+---
+
 # Utility commands
 
 `methylphase utils <subcommand>` provides supporting tools for inspection and downstream use.

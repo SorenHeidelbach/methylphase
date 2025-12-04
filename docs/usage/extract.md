@@ -1,3 +1,8 @@
+---
+layout: default
+title: Extract methylation calls
+---
+
 # Extract methylation calls
 
 `methylphase extract` intersects motifs with mod-tagged alignments and emits per-read and aggregate methylation calls.

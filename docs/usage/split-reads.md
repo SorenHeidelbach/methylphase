@@ -1,3 +1,8 @@
+---
+layout: default
+title: Split reads
+---
+
 # Split reads
 
 `methylphase split-reads` clusters reads by motif methylation features and can write clustering tables plus per-cluster FASTQ/BAM files.

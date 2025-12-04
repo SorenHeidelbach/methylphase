@@ -1,3 +1,8 @@
+---
+layout: default
+title: FAQ and troubleshooting
+---
+
 # FAQ and troubleshooting
 
 **The tool says MM/ML tags are missing.**  

@@ -1,3 +1,8 @@
+---
+layout: default
+title: Phase variants pipeline
+---
+
 # Phase variants pipeline
 
 `methylphase phase-variants` is the end-to-end typing workflow. It extracts methylation features (via split-reads), merges them with a Floria haploset, selects the best latent class model, imputes labels, and emits summaries.

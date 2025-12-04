@@ -1,3 +1,8 @@
+---
+layout: default
+title: Typing utilities
+---
+
 # Typing utilities
 
 `methylphase typing <subcommand>` operates on tabular datasets and configs produced by `phase-variants` or your own pipelines. Core subcommands:

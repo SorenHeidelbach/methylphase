@@ -1,3 +1,8 @@
+---
+layout: default
+title: Docs index
+---
+
 # methylphase docs
 
 The documentation has been expanded into multiple pages for GitHub Pages/MkDocs (or Sphinx via MyST). Start at `index.md` to browse the full guide:

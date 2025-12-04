@@ -1,3 +1,8 @@
+---
+layout: default
+title: Example analysis
+---
+
 # Example analysis
 
 This walkthrough demonstrates a typical methylphase run on a mod-tagged BAM with motif-driven typing.

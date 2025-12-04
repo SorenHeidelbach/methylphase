@@ -1,3 +1,5 @@
 theme: jekyll-theme-minimal
 title: methylphase
 description: Documentation for the methylphase toolkit
+url: "https://sorenheidelbach.github.io"
+baseurl: "/methylphase"

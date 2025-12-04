@@ -1,3 +1,8 @@
+---
+layout: default
+title: Quickstart
+---
+
 # Quickstart
 
 Use this minimal workflow to go from an indexed, mod-tagged BAM to phased methylation labels.

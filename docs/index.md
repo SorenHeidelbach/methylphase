@@ -1,3 +1,8 @@
+---
+layout: default
+title: Home
+---
+
 # methylphase documentation
 
 Welcome to the methylphase docs. This site is organized for GitHub Pages/MkDocs style publishing, with standalone Markdown files that can also be ingested by Sphinx (via MyST) if you prefer that toolchain.
