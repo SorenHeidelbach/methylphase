@@ -15,12 +15,14 @@ Welcome to the methylphase docs. This site is organized for GitHub Pages/MkDocs 
 - [Example analysis](examples/analysis.md)
 - [FAQ and troubleshooting](faq.md)
 
-## Build a docs site (MkDocs, minimal theme)
-1) Install MkDocs: `pip install mkdocs`  
-2) Serve locally: `mkdocs serve` (opens http://127.0.0.1:8000).  
-3) Publish to GitHub Pages: `mkdocs gh-deploy` (requires the `gh-pages` branch to exist or be creatable by your CI).
+## Publish on GitHub Pages (Jekyll minimal theme)
+GitHub Pages will render the Markdown directly using the built-in `jekyll-theme-minimal`.
+1) Ensure `docs/_config.yml` exists (it sets `theme: jekyll-theme-minimal`).  
+2) In GitHub repository settings → Pages, set Source to `Deploy from a branch`, branch `main` (or your default), folder `/docs`.  
+3) Save; Pages will build and serve at `https://<user>.github.io/<repo>/`.
 
-The included `mkdocs.yml` already wires this structure; adjust navigation there if you add pages.
+Optional local preview (MkDocs)
+- You can still preview locally with MkDocs if you want live reload: `pip install mkdocs` then `mkdocs serve` (this uses the default MkDocs theme, not the Pages theme).
 
 ## Using Sphinx instead
 If you prefer Sphinx, enable Markdown with MyST (`pip install sphinx myst-parser`), run `sphinx-quickstart`, and point `source` to `docs/`. Add these lines to `conf.py`:

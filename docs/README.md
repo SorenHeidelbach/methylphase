@@ -8,10 +8,8 @@ The documentation has been expanded into multiple pages for GitHub Pages/MkDocs 
 - Example analysis: `examples/analysis.md`
 - FAQ: `faq.md`
 
-To serve the docs locally with MkDocs (minimal built-in theme):
-```bash
-pip install mkdocs
-mkdocs serve
-```
+GitHub Pages: set the Pages source to the `docs/` folder on your default branch; `_config.yml` selects the `jekyll-theme-minimal` theme.
+
+Optional local preview: `pip install mkdocs` then `mkdocs serve` for live reload (this uses the default MkDocs theme).
 
 If you prefer Sphinx, enable `myst_parser` and point Sphinx at this directory; see `index.md` for the minimal config snippet.
