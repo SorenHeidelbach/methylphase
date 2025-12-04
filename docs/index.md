@@ -15,8 +15,8 @@ Welcome to the methylphase docs. This site is organized for GitHub Pages/MkDocs 
 - [Example analysis](examples/analysis.md)
 - [FAQ and troubleshooting](faq.md)
 
-## Build a docs site (MkDocs)
-1) Install MkDocs (and an optional theme): `pip install mkdocs mkdocs-material`  
+## Build a docs site (MkDocs, minimal theme)
+1) Install MkDocs: `pip install mkdocs`  
 2) Serve locally: `mkdocs serve` (opens http://127.0.0.1:8000).  
 3) Publish to GitHub Pages: `mkdocs gh-deploy` (requires the `gh-pages` branch to exist or be creatable by your CI).
 

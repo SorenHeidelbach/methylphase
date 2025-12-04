@@ -8,9 +8,9 @@ The documentation has been expanded into multiple pages for GitHub Pages/MkDocs 
 - Example analysis: `examples/analysis.md`
 - FAQ: `faq.md`
 
-To serve the docs locally with MkDocs:
+To serve the docs locally with MkDocs (minimal built-in theme):
 ```bash
-pip install mkdocs mkdocs-material
+pip install mkdocs
 mkdocs serve
 ```
 
