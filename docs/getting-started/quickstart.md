@@ -8,9 +8,9 @@ title: Quickstart
 Use this minimal workflow to go from an indexed, mod-tagged BAM to phased methylation labels.
 
 ## 1) Collect inputs
-- Indexed BAM with MM/ML tags: `sample.mod.bam` and `sample.mod.bam.bai`.
-- Motifs to interrogate (inline list or motif file). You can infer motifs using [Nanomotif](https://github.com/MicrobialDarkMatter/nanomotif) and supply the bin-motifs.tsv output.
-- Floria haploset (for the full typing pipeline).
+- Mapped reads in an indexed BAM with MM/ML tags: `sample.mod.bam` and `sample.mod.bam.bai`.
+- Motifs (inline list or motif file). You can identify relevant motifs using [Nanomotif](https://github.com/MicrobialDarkMatter/nanomotif) and supply the bin-motifs.tsv output.
+- [Floria](https://github.com/bluenote-1577/floria) haploset (for the full typing pipeline).
 
 ## 2) Run the end-to-end pipeline
 This drives split-reads internally, merges haplotype and methylation features, selects the best latent variant model, and imputes read labels.
