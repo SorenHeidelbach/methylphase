@@ -33,7 +33,7 @@ jobs:
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
-          source: ./docs      # build the docs/ folder so root README does not interfere
+          source: ./docs      # build the docs/ folder so root README does not interferedocs
           destination: ./_site
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
