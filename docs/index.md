@@ -5,7 +5,11 @@ title: Home
 
 # methylphase documentation
 
-Welcome to the methylphase docs. This site is organized for GitHub Pages/MkDocs style publishing, with standalone Markdown files that can also be ingested by Sphinx (via MyST) if you prefer that toolchain.
+Welcome to the methylphase docs. 
+
+[!NOTE]
+This documentation is still under development. If any information is missing, unclear or incorrect, please open an issue on the [GitHub repository](https://github.com/SorenHeidelbach/methylphase).
+[/!NOTE]
 
 ## Documentation map
 - [Overview](overview.md)
