@@ -33,14 +33,19 @@ This walkthrough demonstrates a typical methylphase run on a mod-tagged BAM with
      --motif-file motifs.tsv \
      --out phase_variants 
    ```
+   
 4) **Review clustering and model choice**
+
    - `phase_variants/split_reads/read_clustering_raw.tsv` for per-read motif features and clusters.
    - `phase_variants/fits/` for per-class log-likelihoods and criteria.
    - `phase_variants/summary.json` for the selected model and criteria values.
+
 5) **Use the imputed outputs**
+
    - `imputed.tsv` for completed datasets (continuous and categorical fields).
    - `imputed_labels.tsv` for MAP class labels.
    - Feed these into downstream association tests or visualization tools.
+
 6) **Split FASTQs by inferred class for downstream assembly/analysis of each variant:**
     ```bash
     methylphase typing split-fastq \

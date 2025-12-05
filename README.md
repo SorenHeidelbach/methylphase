@@ -2,8 +2,8 @@
 
 Toolkit for BAM-driven methylation phasing and typing: extracts motif-level methylation from mod-tagged BAMs, clusters reads, merges with Floria haplotypes, and imputes labels with latent class models.
 
-- Full [docs](https://sorenheidelbach.github.io/methylphase/) 
-
+*See [documentation](https://sorenheidelbach.github.io/methylphase/)  for usage details and examples.*
+ 
 ## Features
 - End-to-end phasing (`phase-variants`) that joins methylation features with Floria haplosets and calls number of variants and assign reads.
 - Split reads by methylation profiles; emit methylation cluster tables and optional FASTQ/BAM splits.
@@ -54,4 +54,3 @@ methylphase split-reads \
   --emit-fastq 
 ```
 
-For arguments, inputs, and examples see the [GitHub Pages docs](https://sorenheidelbach.github.io/methylphase/).
