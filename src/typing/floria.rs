@@ -35,16 +35,12 @@ pub struct FloriaParsed {
 ///
 /// Categories are defined by SNP segments built from hapset breakpoints. Each hapset
 /// overlapping a segment is a subcategory within that category.
-pub fn parse_floria<P: AsRef<Path>>(
-    path: P,
-) -> Result<FloriaParsed, MethylError> {
+pub fn parse_floria<P: AsRef<Path>>(path: P) -> Result<FloriaParsed, MethylError> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
-    let header_re =
-        Regex::new(r"^>HAP(\d+)[^\t]*\t.*SNPRANGE:(\d+)-(\d+)").map_err(|e| {
-            MethylError::Parse(format!("invalid regex for header: {}", e))
-        })?;
+    let header_re = Regex::new(r"^>HAP(\d+)[^\t]*\t.*SNPRANGE:(\d+)-(\d+)")
+        .map_err(|e| MethylError::Parse(format!("invalid regex for header: {}", e)))?;
 
     let mut blocks: Vec<HapsetBlock> = Vec::new();
     let mut current: Option<HapsetBlock> = None;
@@ -61,15 +57,15 @@ pub fn parse_floria<P: AsRef<Path>>(
             let caps = header_re.captures(&line).ok_or_else(|| {
                 MethylError::Parse(format!("failed to parse header line: {}", line))
             })?;
-            let hap_index: usize = caps[1].parse().map_err(|e| {
-                MethylError::Parse(format!("invalid hap index in header: {}", e))
-            })?;
-            let snp_start: usize = caps[2].parse().map_err(|e| {
-                MethylError::Parse(format!("invalid snp start: {}", e))
-            })?;
-            let snp_end: usize = caps[3].parse().map_err(|e| {
-                MethylError::Parse(format!("invalid snp end: {}", e))
-            })?;
+            let hap_index: usize = caps[1]
+                .parse()
+                .map_err(|e| MethylError::Parse(format!("invalid hap index in header: {}", e)))?;
+            let snp_start: usize = caps[2]
+                .parse()
+                .map_err(|e| MethylError::Parse(format!("invalid snp start: {}", e)))?;
+            let snp_end: usize = caps[3]
+                .parse()
+                .map_err(|e| MethylError::Parse(format!("invalid snp end: {}", e)))?;
             current = Some(HapsetBlock {
                 _hap_name: format!("HAP{}", hap_index),
                 _hap_index: hap_index,
@@ -218,18 +214,48 @@ pub fn parse_floria<P: AsRef<Path>>(
     }
 
     // Stable order ids by insertion.
-    let mut ids: Vec<(usize, String)> = id_set
-        .into_iter()
-        .map(|(id, idx)| (idx, id))
-        .collect();
+    let mut ids: Vec<(usize, String)> = id_set.into_iter().map(|(id, idx)| (idx, id)).collect();
     ids.sort_by_key(|(idx, _)| *idx);
     let ids: Vec<String> = ids.into_iter().map(|(_, id)| id).collect();
 
+    // Drop categories that only have a single subcategory; they don't contribute
+    // to inference and break Dirichlet initialization (needs >= 2 dims).
+    let keep_indices: Vec<usize> = n_levels
+        .iter()
+        .enumerate()
+        .filter(|(_, &lvl)| lvl > 1)
+        .map(|(idx, _)| idx)
+        .collect();
+    if keep_indices.len() != n_levels.len() {
+        let dropped = n_levels.len() - keep_indices.len();
+        eprintln!(
+            "[methylphase::typing] Dropping {} categorical dimension(s) with only one subcategory",
+            dropped
+        );
+    }
+
+    let filtered_levels: Vec<usize> = keep_indices.iter().map(|&idx| n_levels[idx]).collect();
+    let filtered_names: Vec<String> = keep_indices
+        .iter()
+        .map(|&idx| category_names[idx].clone())
+        .collect();
+    let filtered_subcat_names: Vec<Vec<String>> = keep_indices
+        .iter()
+        .map(|&idx| subcat_names[idx].clone())
+        .collect();
+
+    let mut filtered_data = Array2::<Option<usize>>::from_elem((n_rows, keep_indices.len()), None);
+    for (new_col, &old_col) in keep_indices.iter().enumerate() {
+        for row in 0..n_rows {
+            filtered_data[(row, new_col)] = data[(row, old_col)];
+        }
+    }
+
     let dataset = Dataset {
         ids,
-        data,
-        n_levels: n_levels.clone(),
-        category_names: category_names.clone(),
+        data: filtered_data,
+        n_levels: filtered_levels.clone(),
+        category_names: filtered_names.clone(),
         methylation: None,
         methylation_names: Vec::new(),
     };
@@ -237,8 +263,8 @@ pub fn parse_floria<P: AsRef<Path>>(
 
     let config = CategoryConfig {
         categories: Categories {
-            names: category_names,
-            levels: n_levels,
+            names: filtered_names,
+            levels: filtered_levels,
         },
         methylation_names: Vec::new(),
     };
@@ -246,6 +272,6 @@ pub fn parse_floria<P: AsRef<Path>>(
     Ok(FloriaParsed {
         dataset,
         config,
-        subcat_names,
+        subcat_names: filtered_subcat_names,
     })
 }

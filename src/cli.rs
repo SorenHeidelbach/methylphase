@@ -1,6 +1,6 @@
+use crate::typing::cli as typing_cli;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use crate::typing::cli as typing_cli;
 
 /// Command-line interface definition.
 #[derive(Debug, Parser)]

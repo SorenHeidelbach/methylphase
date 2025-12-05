@@ -28,9 +28,15 @@ pub fn split_fastq(
     let mut lines = reader.lines();
     while let Some(h) = lines.next() {
         let header = h?;
-        let seq = lines.next().ok_or_else(|| MethylError::Parse("truncated FASTQ".into()))??;
-        let plus = lines.next().ok_or_else(|| MethylError::Parse("truncated FASTQ".into()))??;
-        let qual = lines.next().ok_or_else(|| MethylError::Parse("truncated FASTQ".into()))??;
+        let seq = lines
+            .next()
+            .ok_or_else(|| MethylError::Parse("truncated FASTQ".into()))??;
+        let plus = lines
+            .next()
+            .ok_or_else(|| MethylError::Parse("truncated FASTQ".into()))??;
+        let qual = lines
+            .next()
+            .ok_or_else(|| MethylError::Parse("truncated FASTQ".into()))??;
 
         let rid = parse_read_id(&header);
         if let Some(cls) = assign_map.get(&rid) {
@@ -74,10 +80,7 @@ fn parse_read_id(header: &str) -> String {
         .to_string()
 }
 
-fn load_assignments(
-    path: &Path,
-    delimiter: u8,
-) -> Result<HashMap<String, usize>, MethylError> {
+fn load_assignments(path: &Path, delimiter: u8) -> Result<HashMap<String, usize>, MethylError> {
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(true)

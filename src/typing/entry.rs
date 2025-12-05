@@ -1,5 +1,7 @@
-use crate::typing::cli::{Commands, RunArgs};
-use crate::typing::data::{self, load_config, load_dataset, Dataset};
+use crate::cli::ClusterAlgorithm;
+use crate::commands::split_reads;
+use crate::typing::cli::{Commands, FloriaInput, RunArgs};
+use crate::typing::data::{self, load_config, load_dataset, Categories, CategoryConfig, Dataset};
 use crate::typing::em::{self, fit_em, EmSettings};
 use crate::typing::fastq_split::split_fastq;
 use crate::typing::floria::parse_floria;
@@ -8,8 +10,7 @@ use crate::typing::methylation::{add_methylation_features, load_methylation_feat
 use crate::typing::model_selection::{Criterion, ModelSelectionStrategy, SelectionStrategy};
 use crate::typing::priors::DirichletPriors;
 use anyhow::{anyhow, Result};
-use crate::commands::split_reads;
-use crate::cli::ClusterAlgorithm;
+use ndarray::Array2;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -52,10 +53,7 @@ pub fn run(command: Commands) -> Result<()> {
             log_step(format!("Writing model to {}", args.output_model.display()));
             write_model(&args.output_model, &model)?;
             if let Some(path) = args.output_responsibilities {
-                log_step(format!(
-                    "Writing responsibilities to {}",
-                    path.display()
-                ));
+                log_step(format!("Writing responsibilities to {}", path.display()));
                 em::write_responsibilities(&path, &dataset, &result)?;
             }
         }
@@ -156,12 +154,14 @@ pub fn run(command: Commands) -> Result<()> {
                 "Best C = {} ({} = {:.4}, log-likelihood = {:.4})",
                 best_c, criterion_label, best_score, result.log_likelihood
             ));
-            log_step(format!("Writing best model to {}", args.output_model.display()));
+            log_step(format!(
+                "Writing best model to {}",
+                args.output_model.display()
+            ));
             write_model(&args.output_model, &model)?;
             println!(
                 "Selected C = {} with log-likelihood {:.4}",
-                best_c,
-                result.log_likelihood
+                best_c, result.log_likelihood
             );
         }
         Commands::Impute(args) => {
@@ -177,7 +177,10 @@ pub fn run(command: Commands) -> Result<()> {
             let model: em::ModelFile = read_model(&args.model)?;
             log_step("Imputing missing values using provided model");
             let imputed = impute_dataset(&dataset, &model.params)?;
-            log_step(format!("Writing imputed dataset to {}", args.output.display()));
+            log_step(format!(
+                "Writing imputed dataset to {}",
+                args.output.display()
+            ));
             data::write_dataset(&args.output, &imputed, args.delimiter_byte())?;
         }
         Commands::ConvertFloria(args) => {
@@ -189,8 +192,7 @@ pub fn run(command: Commands) -> Result<()> {
                     "Loading methylation features {}",
                     meth_path.display()
                 ));
-                let (vals, motifs) =
-                    load_methylation_features(meth_path, args.delimiter_byte())?;
+                let (vals, motifs) = load_methylation_features(meth_path, args.delimiter_byte())?;
                 log_step("Combining haploset with methylation features");
                 add_methylation_features(&parsed.dataset, &parsed.config, &vals, &motifs)?
             } else {
@@ -216,7 +218,12 @@ pub fn run(command: Commands) -> Result<()> {
                 args.fastq.display(),
                 args.assignments.display()
             ));
-            split_fastq(&args.fastq, &args.assignments, args.delimiter_byte(), &args.out)?;
+            split_fastq(
+                &args.fastq,
+                &args.assignments,
+                args.delimiter_byte(),
+                &args.out,
+            )?;
         }
     }
     Ok(())
@@ -235,6 +242,31 @@ fn read_model(path: &Path) -> Result<em::ModelFile> {
     Ok(model)
 }
 
+fn build_pseudo_dataset(base: &Dataset, classes: usize) -> (Dataset, CategoryConfig) {
+    let levels = classes.max(2);
+    let n_rows = base.n_blocks();
+    let mut data = Array2::<Option<usize>>::from_elem((n_rows, 1), None);
+    for i in 0..n_rows {
+        data[(i, 0)] = Some(i % levels);
+    }
+    let ds = Dataset {
+        ids: base.ids.clone(),
+        data,
+        n_levels: vec![levels],
+        category_names: vec!["pseudo_hap".to_string()],
+        methylation: base.methylation.clone(),
+        methylation_names: base.methylation_names.clone(),
+    };
+    let cfg = CategoryConfig {
+        categories: Categories {
+            names: vec!["pseudo_hap".to_string()],
+            levels: vec![levels],
+        },
+        methylation_names: base.methylation_names.clone(),
+    };
+    (ds, cfg)
+}
+
 fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
     let pipeline_start = Instant::now();
     log_step(format!(
@@ -243,14 +275,23 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
     ));
     std::fs::create_dir_all(&args.out)?;
 
-    log_step(format!("Parsing Floria haploset {}", args.floria.display()));
-    let parse_start = Instant::now();
-    let parsed = parse_floria(&args.floria)?;
-    log_step(format!(
-        "Parsed Floria in {:.2?}. {}",
-        parse_start.elapsed(),
-        describe_dataset(&parsed.dataset)
-    ));
+    let parsed = match &args.floria {
+        FloriaInput::Path(path) => {
+            log_step(format!("Parsing Floria haploset {}", path.display()));
+            let parse_start = Instant::now();
+            let parsed = parse_floria(path)?;
+            log_step(format!(
+                "Parsed Floria in {:.2?}. {}",
+                parse_start.elapsed(),
+                describe_dataset(&parsed.dataset)
+            ));
+            Some(parsed)
+        }
+        FloriaInput::Skip => {
+            log_step("Skipping Floria haploset; running methylation-only typing");
+            None
+        }
+    };
 
     log_step(format!(
         "Loading methylation features {}",
@@ -265,30 +306,51 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
 
     log_step("Combining haploset and methylation features");
     let merge_start = Instant::now();
-    let (dataset, config) =
-        add_methylation_features(&parsed.dataset, &parsed.config, &meth_vals, &motifs)?;
+    let (base_dataset, base_config) = if let Some(parsed) = &parsed {
+        add_methylation_features(&parsed.dataset, &parsed.config, &meth_vals, &motifs)?
+    } else {
+        let mut ids: Vec<String> = meth_vals.keys().cloned().collect();
+        ids.sort_unstable();
+        let n_rows = ids.len();
+        let empty_data = Array2::<Option<usize>>::from_elem((n_rows, 0), None);
+        let base_dataset = Dataset {
+            ids,
+            data: empty_data,
+            n_levels: Vec::new(),
+            category_names: Vec::new(),
+            methylation: None,
+            methylation_names: Vec::new(),
+        };
+        let base_config = CategoryConfig {
+            categories: Categories {
+                names: Vec::new(),
+                levels: Vec::new(),
+            },
+            methylation_names: Vec::new(),
+        };
+        add_methylation_features(&base_dataset, &base_config, &meth_vals, &motifs)?
+    };
     log_step(format!(
         "Merged dataset in {:.2?}. {}",
         merge_start.elapsed(),
-        describe_dataset(&dataset)
+        describe_dataset(&base_dataset)
     ));
+    let pseudo_needed = base_dataset.n_categories() == 0;
+    if pseudo_needed && parsed.is_some() {
+        log_step("All hap categories were dropped; falling back to pseudo category for typing");
+    }
 
     // Subcategory names (hap only; methylation is continuous).
-    let mut subcat_names = Vec::with_capacity(parsed.subcat_names.len());
-    subcat_names.extend(parsed.subcat_names.clone());
+    let mut subcat_names = parsed
+        .as_ref()
+        .map(|p| p.subcat_names.clone())
+        .unwrap_or_else(Vec::new);
+    if pseudo_needed {
+        subcat_names.clear();
+    }
 
-    // Save dataset and config.
     let dataset_path = args.out.join("dataset.tsv");
     let config_path = args.out.join("categories.toml");
-    log_step(format!(
-        "Writing dataset to {} and config to {}",
-        dataset_path.display(),
-        config_path.display()
-    ));
-    data::write_dataset(&dataset_path, &dataset, args.delimiter_byte())?;
-    let toml_str = toml::to_string_pretty(&config)?;
-    std::fs::write(&config_path, toml_str)?;
-
     let priors = DirichletPriors {
         alpha_pi: args.alpha_pi,
         alpha_phi: args.alpha_phi,
@@ -324,14 +386,22 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
         args.min_classes, args.max_classes, criterion_label
     ));
 
-    let mut best: Option<(usize, em::EmResult, f64)> = None;
+    let mut best: Option<(usize, em::EmResult, f64, Dataset, CategoryConfig)> = None;
     let mut summary = Vec::new();
     for c in args.min_classes..=args.max_classes {
+        let (fit_dataset, fit_config) = if pseudo_needed {
+            build_pseudo_dataset(&base_dataset, c)
+        } else {
+            (base_dataset.clone(), base_config.clone())
+        };
+
         let score_start = Instant::now();
         let score = match strategy.criterion {
-            Criterion::CrossValidated => strategy.cross_validated_score(&dataset, c, &|ds, cls| {
-                fit_em(ds, cls, &priors, settings)
-            })?,
+            Criterion::CrossValidated => {
+                strategy.cross_validated_score(&fit_dataset, c, &|ds, cls| {
+                    fit_em(ds, cls, &priors, settings)
+                })?
+            }
             _ => {
                 // We still fit full data to emit artifacts; score uses same fit.
                 // Fallback updated below for BIC/ICL.
@@ -340,10 +410,10 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
         };
 
         let fit_start = Instant::now();
-        let result = fit_em(&dataset, c, &priors, settings)?;
+        let result = fit_em(&fit_dataset, c, &priors, settings)?;
         let final_score = match strategy.criterion {
             Criterion::CrossValidated => score,
-            _ => strategy.score(&dataset, &result, c),
+            _ => strategy.score(&fit_dataset, &result, c),
         };
         let log_duration = if matches!(strategy.criterion, Criterion::CrossValidated) {
             format!(
@@ -369,7 +439,7 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
         };
         log_step(log_duration);
 
-        let model = em::ModelFile::from_parts(&config, &result.params);
+        let model = em::ModelFile::from_parts(&fit_config, &result.params);
         let model_path = fits_dir.join(format!("model_C{}.json", c));
         log_step(format!("Writing model to {}", model_path.display()));
         write_model(&model_path, &model)?;
@@ -378,7 +448,7 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
             "Writing responsibilities to {}",
             resp_path.display()
         ));
-        em::write_responsibilities(&resp_path, &dataset, &result)?;
+        em::write_responsibilities(&resp_path, &fit_dataset, &result)?;
         summary.push(serde_json::json!({
             "classes": c,
             "log_likelihood": result.log_likelihood,
@@ -387,20 +457,35 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
             "responsibilities_path": resp_path.file_name().unwrap().to_string_lossy()
         }));
         match &best {
-            None => best = Some((c, result, final_score)),
-            Some((_, _, best_score)) if final_score < *best_score => {
-                best = Some((c, result, final_score))
+            None => {
+                best = Some((
+                    c,
+                    result,
+                    final_score,
+                    fit_dataset.clone(),
+                    fit_config.clone(),
+                ))
+            }
+            Some((_, _, best_score, _, _)) if final_score < *best_score => {
+                best = Some((
+                    c,
+                    result,
+                    final_score,
+                    fit_dataset.clone(),
+                    fit_config.clone(),
+                ))
             }
             _ => {}
         }
     }
 
-    let (best_c, best_result, best_score) = best.ok_or_else(|| anyhow!("no fits ran"))?;
+    let (best_c, best_result, best_score, best_dataset, best_config) =
+        best.ok_or_else(|| anyhow!("no fits ran"))?;
     log_step(format!(
         "Best C = {} ({} = {:.4}, log-likelihood = {:.4})",
         best_c, criterion_label, best_score, best_result.log_likelihood
     ));
-    let best_model = em::ModelFile::from_parts(&config, &best_result.params);
+    let best_model = em::ModelFile::from_parts(&best_config, &best_result.params);
     log_step(format!(
         "Writing best model and responsibilities to {}",
         args.out.display()
@@ -408,15 +493,24 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
     write_model(&args.out.join("best_model.json"), &best_model)?;
     em::write_responsibilities(
         &args.out.join("best_responsibilities.tsv"),
-        &dataset,
+        &best_dataset,
         &best_result,
     )?;
+    let map_path = args.out.join("map_assignments.tsv");
+    log_step(format!(
+        "Writing MAP class assignments to {}",
+        map_path.display()
+    ));
+    write_map_assignments(&map_path, &best_dataset, &best_result)?;
 
     // Impute with best model.
     log_step("Imputing with best model");
-    let imputed = impute_dataset(&dataset, &best_result.params)?;
+    let imputed = impute_dataset(&best_dataset, &best_result.params)?;
     let imputed_path = args.out.join("imputed.tsv");
-    log_step(format!("Writing imputed dataset to {}", imputed_path.display()));
+    log_step(format!(
+        "Writing imputed dataset to {}",
+        imputed_path.display()
+    ));
     data::write_dataset(&imputed_path, &imputed, args.delimiter_byte())?;
     write_imputed_labels(
         &args.out.join("imputed_labels.tsv"),
@@ -426,12 +520,14 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
         &best_result,
     )?;
 
+    // Save dataset and config corresponding to the best fit.
+    data::write_dataset(&dataset_path, &best_dataset, args.delimiter_byte())?;
+    let toml_str = toml::to_string_pretty(&best_config)?;
+    std::fs::write(&config_path, toml_str)?;
+
     // Summary JSON.
     let summary_path = args.out.join("summary.json");
-    log_step(format!(
-        "Writing summary to {}",
-        summary_path.display()
-    ));
+    log_step(format!("Writing summary to {}", summary_path.display()));
     let summary_obj = serde_json::json!({
         "min_classes": args.min_classes,
         "max_classes": args.max_classes,
@@ -446,6 +542,24 @@ fn run_pipeline(args: RunArgs, methylation_path: PathBuf) -> Result<()> {
         pipeline_start.elapsed()
     ));
 
+    Ok(())
+}
+
+fn write_map_assignments(path: &Path, dataset: &Dataset, result: &em::EmResult) -> Result<()> {
+    let mut file = File::create(path)?;
+    file.write_all(b"id\tassigned_class\tmax_probability\n")?;
+    for (i, id) in dataset.ids.iter().enumerate() {
+        let mut max_c = 0;
+        let mut max_resp = -1.0;
+        for c in 0..result.params.pi.len() {
+            let r = result.responsibilities[(i, c)];
+            if r > max_resp {
+                max_resp = r;
+                max_c = c;
+            }
+        }
+        file.write_all(format!("{}\t{}\t{:.6}\n", id, max_c, max_resp).as_bytes())?;
+    }
     Ok(())
 }
 

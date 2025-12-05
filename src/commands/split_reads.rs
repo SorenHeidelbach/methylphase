@@ -1,6 +1,6 @@
 use crate::{
-    commands::shared,
     cli::ClusterAlgorithm,
+    commands::shared,
     core::{MotifQuery, ReadRecord},
     features::extract::{
         self, AggregateRecord, ExtractionSink, FastqRecord, MotifSummaryRecord, PerReadRecord,
@@ -37,7 +37,7 @@ pub fn run(
     min_samples: Option<usize>,
     emit_fastq: bool,
     threads: usize,
-        cluster_algorithm: ClusterAlgorithm,
+    cluster_algorithm: ClusterAlgorithm,
     bin_ids: Option<Vec<String>>,
     contigs: Vec<String>,
 ) -> Result<()> {
@@ -510,13 +510,9 @@ fn cluster_reads(
     min_samples: usize,
 ) -> Result<Vec<i32>> {
     match algorithm {
-        ClusterAlgorithm::Hdbscan => {
-            cluster_with_hdbscan(data, min_cluster_size, min_samples)
-        }
+        ClusterAlgorithm::Hdbscan => cluster_with_hdbscan(data, min_cluster_size, min_samples),
         ClusterAlgorithm::Gmm => cluster_with_gmm(data, min_cluster_size),
-        ClusterAlgorithm::Agglomerative => {
-            cluster_with_agglomerative(data, min_cluster_size)
-        }
+        ClusterAlgorithm::Agglomerative => cluster_with_agglomerative(data, min_cluster_size),
     }
 }
 
@@ -580,10 +576,7 @@ fn cluster_with_gmm(data: &[Vec<f64>], min_cluster_size: usize) -> Result<Vec<i3
     }
 }
 
-fn cluster_with_agglomerative(
-    data: &[Vec<f64>],
-    min_cluster_size: usize,
-) -> Result<Vec<i32>> {
+fn cluster_with_agglomerative(data: &[Vec<f64>], min_cluster_size: usize) -> Result<Vec<i32>> {
     let n = data.len();
     if n == 0 {
         return Ok(Vec::new());
@@ -735,10 +728,7 @@ fn initialize_gmm_components(
     components
 }
 
-fn expectation_step(
-    data: &[Vec<f64>],
-    components: &[GmmComponent],
-) -> (Vec<Vec<f64>>, f64) {
+fn expectation_step(data: &[Vec<f64>], components: &[GmmComponent]) -> (Vec<Vec<f64>>, f64) {
     let mut responsibilities = vec![vec![0.0; components.len()]; data.len()];
     let mut log_likelihood = 0.0;
     for (idx, sample) in data.iter().enumerate() {
@@ -872,10 +862,7 @@ fn log_gaussian_diag(sample: &[f64], component: &GmmComponent) -> f64 {
 }
 
 fn log_sum_exp(values: &[f64]) -> f64 {
-    let max = values
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if !max.is_finite() {
         return max;
     }
@@ -1453,33 +1440,17 @@ mod tests {
             vec![5.0, 5.0],
             vec![5.1, 5.1],
         ];
-        let hdbscan = cluster_reads(
-            &data,
-            ClusterAlgorithm::Hdbscan,
-            2,
-            2,
-        )
-        .expect("hdbscan clustering failed");
+        let hdbscan = cluster_reads(&data, ClusterAlgorithm::Hdbscan, 2, 2)
+            .expect("hdbscan clustering failed");
         assert_eq!(hdbscan.len(), 4);
         assert!(hdbscan[0] != hdbscan[2]);
 
-        let gmm = cluster_reads(
-            &data,
-            ClusterAlgorithm::Gmm,
-            2,
-            2,
-        )
-        .expect("gmm clustering failed");
+        let gmm = cluster_reads(&data, ClusterAlgorithm::Gmm, 2, 2).expect("gmm clustering failed");
         assert_eq!(gmm.len(), 4);
         assert!(gmm[0] != gmm[2]);
 
-        let agg = cluster_reads(
-            &data,
-            ClusterAlgorithm::Agglomerative,
-            2,
-            2,
-        )
-        .expect("agglomerative clustering failed");
+        let agg = cluster_reads(&data, ClusterAlgorithm::Agglomerative, 2, 2)
+            .expect("agglomerative clustering failed");
         assert_eq!(agg.len(), 4);
         assert!(agg[0] != agg[2]);
     }
