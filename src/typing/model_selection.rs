@@ -126,14 +126,12 @@ impl ModelSelectionStrategy for SelectionStrategy {
                     let score = self.cross_validated_score(dataset, c, &fit_fn)?;
                     match &best_cv {
                         None => best_cv = Some((c, score)),
-                        Some((_, best_score)) if score < *best_score => {
-                            best_cv = Some((c, score))
-                        }
+                        Some((_, best_score)) if score < *best_score => best_cv = Some((c, score)),
                         _ => {}
                     }
                 }
-                let (best_c, best_score) = best_cv
-                    .ok_or_else(|| MethylError::Other("no model fitted".into()))?;
+                let (best_c, best_score) =
+                    best_cv.ok_or_else(|| MethylError::Other("no model fitted".into()))?;
                 let best_fit = fit_fn(dataset, best_c)?;
                 Ok((best_c, best_fit, best_score))
             }

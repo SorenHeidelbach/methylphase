@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use methylphase::{
-    cli::{Cli, Command, ContigSelection, ClusterAlgorithm, UtilsCommand},
+    cli::{Cli, ClusterAlgorithm, Command, ContigSelection, UtilsCommand},
     run,
 };
 use noodles_bam as bam;

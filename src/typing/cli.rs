@@ -1,6 +1,21 @@
 use clap::{ArgGroup, Subcommand};
 use std::path::PathBuf;
 
+/// Floria haploset input: either a path or the literal "skip" to omit hap categories.
+#[derive(Debug, Clone)]
+pub enum FloriaInput {
+    Path(PathBuf),
+    Skip,
+}
+
+fn parse_floria_arg(raw: &str) -> Result<FloriaInput, String> {
+    if raw.eq_ignore_ascii_case("skip") {
+        Ok(FloriaInput::Skip)
+    } else {
+        Ok(FloriaInput::Path(PathBuf::from(raw)))
+    }
+}
+
 /// Supported subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
@@ -130,8 +145,13 @@ pub struct ConvertFloriaArgs {
 #[derive(clap::Args, Debug)]
 pub struct RunArgs {
     /// Floria haploset file.
-    #[arg(long, help_heading = "INPUT")]
-    pub floria: PathBuf,
+    #[arg(
+        long,
+        value_parser = parse_floria_arg,
+        value_name = "PATH|skip",
+        help_heading = "INPUT"
+    )]
+    pub floria: FloriaInput,
     /// BAM with methylation tags.
     #[arg(long, help_heading = "INPUT")]
     pub bam: PathBuf,
@@ -148,7 +168,11 @@ pub struct RunArgs {
     #[arg(long = "motif-file", value_name = "FILE", help_heading = "MOTIFS")]
     pub motif_file: Option<PathBuf>,
     /// Optional FASTQ/BAM providing sequences when BAM entries omit SEQ.
-    #[arg(long = "sequence-fallback", value_name = "FILE", help_heading = "INPUT")]
+    #[arg(
+        long = "sequence-fallback",
+        value_name = "FILE",
+        help_heading = "INPUT"
+    )]
     pub sequence_fallback: Option<PathBuf>,
     // split-reads tuning uses defaults; use the split-reads command for manual control.
     /// Minimum latent classes to evaluate (lower bound on number of phase variants).
@@ -175,18 +199,10 @@ pub struct RunArgs {
     )]
     pub criterion: String,
     /// Scale on the BIC/ICL penalty term; larger values favor fewer phase variants.
-    #[arg(
-        long,
-        default_value = "2.0",
-        help_heading = "MODEL SELECTION"
-    )]
+    #[arg(long, default_value = "2.0", help_heading = "MODEL SELECTION")]
     pub penalty_multiplier: f64,
     /// Folds for cross-validated scoring (used only when criterion=cv).
-    #[arg(
-        long,
-        default_value = "5",
-        help_heading = "MODEL SELECTION"
-    )]
+    #[arg(long, default_value = "5", help_heading = "MODEL SELECTION")]
     pub cv_folds: usize,
     /// Maximum EM iterations per fit.
     #[arg(long, default_value = "100", help_heading = "OPTIMIZATION")]
@@ -195,11 +211,7 @@ pub struct RunArgs {
     #[arg(long, default_value = "1e-6", help_heading = "OPTIMIZATION")]
     pub tol: f64,
     /// Drop classes whose average responsibility falls below this fraction; can roughly be interpreted as minimum phase variant abundance.
-    #[arg(
-        long,
-        default_value = "0.0",
-        help_heading = "OPTIMIZATION"
-    )]
+    #[arg(long, default_value = "0.0", help_heading = "OPTIMIZATION")]
     pub min_class_weight: f64,
     #[arg(long, default_value = "\t", help_heading = "IO")]
     pub delimiter: String,

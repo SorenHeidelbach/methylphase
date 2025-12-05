@@ -4,6 +4,7 @@ use crate::typing::priors::DirichletPriors;
 use ndarray::Array2;
 use rand::distributions::Distribution;
 use rand::thread_rng;
+use rand::Rng;
 use rand_distr::Dirichlet;
 use serde::{Deserialize, Serialize};
 use std::f64::NEG_INFINITY;
@@ -14,12 +15,12 @@ use std::path::Path;
 /// Mixture weights and categorical emission parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmParams {
-    pub pi: Vec<f64>,                // size C
-    pub phi: Vec<Vec<Vec<f64>>>,     // [c][k][j] categorical
+    pub pi: Vec<f64>,            // size C
+    pub phi: Vec<Vec<Vec<f64>>>, // [c][k][j] categorical
     /// Gaussian means per class per methylation dimension (if any).
-    pub meth_mean: Vec<Vec<f64>>,    // [c][m]
+    pub meth_mean: Vec<Vec<f64>>, // [c][m]
     /// Gaussian variances per class per methylation dimension (if any).
-    pub meth_var: Vec<Vec<f64>>,     // [c][m]
+    pub meth_var: Vec<Vec<f64>>, // [c][m]
 }
 
 /// EM algorithm settings.
@@ -127,9 +128,8 @@ fn initialize_params(
         let mut class_phi = Vec::with_capacity(dataset.n_categories());
         for &levels in &dataset.n_levels {
             let alpha = vec![priors.alpha_phi; levels];
-            let dirichlet = Dirichlet::new(&alpha).map_err(|e| {
-                MethylError::Math(format!("invalid Dirichlet parameters: {}", e))
-            })?;
+            let dirichlet = Dirichlet::new(&alpha)
+                .map_err(|e| MethylError::Math(format!("invalid Dirichlet parameters: {}", e)))?;
             let sample = dirichlet.sample(&mut rng);
             class_phi.push(sample);
         }
@@ -148,11 +148,14 @@ fn initialize_params(
                     vals.push(v);
                 }
             }
-            let mean = if vals.is_empty() {
-                0.0
-            } else {
-                vals.iter().copied().sum::<f64>() / vals.len() as f64
-            };
+            if vals.is_empty() {
+                for c in 0..n_classes {
+                    meth_mean[c][m] = 0.0;
+                    meth_var[c][m] = 1.0;
+                }
+                continue;
+            }
+            let mean = vals.iter().copied().sum::<f64>() / vals.len() as f64;
             let var = if vals.len() <= 1 {
                 1.0
             } else {
@@ -160,13 +163,28 @@ fn initialize_params(
                 (ss / (vals.len() as f64 - 1.0)).max(1e-6)
             };
             for c in 0..n_classes {
-                meth_mean[c][m] = mean;
+                let init_mean = if n_classes > 1 {
+                    if vals.len() > 1 {
+                        let idx = rng.gen_range(0..vals.len());
+                        vals[idx]
+                    } else {
+                        vals[0] + (c as f64) * 1e-6
+                    }
+                } else {
+                    mean
+                };
+                meth_mean[c][m] = init_mean;
                 meth_var[c][m] = var;
             }
         }
     }
 
-    Ok(EmParams { pi, phi, meth_mean, meth_var })
+    Ok(EmParams {
+        pi,
+        phi,
+        meth_mean,
+        meth_var,
+    })
 }
 
 fn e_step(
@@ -206,19 +224,15 @@ fn e_step(
                     if let Some(v) = meth[(i, m)] {
                         let mean = params.meth_mean[c][m];
                         let var = params.meth_var[c][m].max(1e-12);
-                        let log_pdf =
-                            -0.5 * ((2.0 * std::f64::consts::PI * var).ln())
-                                - (v - mean).powi(2) / (2.0 * var);
+                        let log_pdf = -0.5 * ((2.0 * std::f64::consts::PI * var).ln())
+                            - (v - mean).powi(2) / (2.0 * var);
                         log_score += log_pdf;
                     }
                 }
             }
             log_scores[c] = log_score;
         }
-        let max_log = log_scores
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
+        let max_log = log_scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mut sum = 0.0;
         for c in 0..n_classes {
             let val = (log_scores[c] - max_log).exp();
@@ -334,10 +348,7 @@ fn prune_small_classes(
         if let Some((idx, _)) = effective
             .iter()
             .enumerate()
-            .max_by(|a, b| a
-                .1
-                .partial_cmp(b.1)
-                .unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
         {
             keep.push(idx);
         } else {
@@ -380,10 +391,7 @@ fn prune_small_classes(
         );
     }
 
-    let mut new_pi: Vec<f64> = keep
-        .iter()
-        .map(|idx| effective[*idx].max(1e-12))
-        .collect();
+    let mut new_pi: Vec<f64> = keep.iter().map(|idx| effective[*idx].max(1e-12)).collect();
     let pi_sum: f64 = new_pi.iter().sum();
     for val in &mut new_pi {
         *val /= pi_sum;
@@ -438,23 +446,16 @@ pub(crate) fn log_likelihood(dataset: &Dataset, params: &EmParams) -> Result<f64
                     if let Some(v) = meth[(i, m)] {
                         let mean = params.meth_mean[c][m];
                         let var = params.meth_var[c][m].max(1e-12);
-                        let log_pdf =
-                            -0.5 * ((2.0 * std::f64::consts::PI * var).ln())
-                                - (v - mean).powi(2) / (2.0 * var);
+                        let log_pdf = -0.5 * ((2.0 * std::f64::consts::PI * var).ln())
+                            - (v - mean).powi(2) / (2.0 * var);
                         log_score += log_pdf;
                     }
                 }
             }
             log_scores[c] = log_score;
         }
-        let max_log = log_scores
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let sum: f64 = log_scores
-            .iter()
-            .map(|ls| (ls - max_log).exp())
-            .sum();
+        let max_log = log_scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let sum: f64 = log_scores.iter().map(|ls| (ls - max_log).exp()).sum();
         total += max_log + sum.ln();
     }
     Ok(total)

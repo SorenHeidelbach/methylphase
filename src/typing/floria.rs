@@ -35,16 +35,12 @@ pub struct FloriaParsed {
 ///
 /// Categories are defined by SNP segments built from hapset breakpoints. Each hapset
 /// overlapping a segment is a subcategory within that category.
-pub fn parse_floria<P: AsRef<Path>>(
-    path: P,
-) -> Result<FloriaParsed, MethylError> {
+pub fn parse_floria<P: AsRef<Path>>(path: P) -> Result<FloriaParsed, MethylError> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
-    let header_re =
-        Regex::new(r"^>HAP(\d+)[^\t]*\t.*SNPRANGE:(\d+)-(\d+)").map_err(|e| {
-            MethylError::Parse(format!("invalid regex for header: {}", e))
-        })?;
+    let header_re = Regex::new(r"^>HAP(\d+)[^\t]*\t.*SNPRANGE:(\d+)-(\d+)")
+        .map_err(|e| MethylError::Parse(format!("invalid regex for header: {}", e)))?;
 
     let mut blocks: Vec<HapsetBlock> = Vec::new();
     let mut current: Option<HapsetBlock> = None;
@@ -61,15 +57,15 @@ pub fn parse_floria<P: AsRef<Path>>(
             let caps = header_re.captures(&line).ok_or_else(|| {
                 MethylError::Parse(format!("failed to parse header line: {}", line))
             })?;
-            let hap_index: usize = caps[1].parse().map_err(|e| {
-                MethylError::Parse(format!("invalid hap index in header: {}", e))
-            })?;
-            let snp_start: usize = caps[2].parse().map_err(|e| {
-                MethylError::Parse(format!("invalid snp start: {}", e))
-            })?;
-            let snp_end: usize = caps[3].parse().map_err(|e| {
-                MethylError::Parse(format!("invalid snp end: {}", e))
-            })?;
+            let hap_index: usize = caps[1]
+                .parse()
+                .map_err(|e| MethylError::Parse(format!("invalid hap index in header: {}", e)))?;
+            let snp_start: usize = caps[2]
+                .parse()
+                .map_err(|e| MethylError::Parse(format!("invalid snp start: {}", e)))?;
+            let snp_end: usize = caps[3]
+                .parse()
+                .map_err(|e| MethylError::Parse(format!("invalid snp end: {}", e)))?;
             current = Some(HapsetBlock {
                 _hap_name: format!("HAP{}", hap_index),
                 _hap_index: hap_index,
@@ -218,10 +214,7 @@ pub fn parse_floria<P: AsRef<Path>>(
     }
 
     // Stable order ids by insertion.
-    let mut ids: Vec<(usize, String)> = id_set
-        .into_iter()
-        .map(|(id, idx)| (idx, id))
-        .collect();
+    let mut ids: Vec<(usize, String)> = id_set.into_iter().map(|(id, idx)| (idx, id)).collect();
     ids.sort_by_key(|(idx, _)| *idx);
     let ids: Vec<String> = ids.into_iter().map(|(_, id)| id).collect();
 

@@ -46,30 +46,24 @@ impl Dataset {
     }
 
     pub fn n_methylation(&self) -> usize {
-        self.methylation
-            .as_ref()
-            .map(|a| a.shape()[1])
-            .unwrap_or(0)
+        self.methylation.as_ref().map(|a| a.shape()[1]).unwrap_or(0)
     }
 
     /// Validate observations are consistent with category levels.
     pub fn validate(&self) -> Result<(), MethylError> {
         for ((i, k), value) in self.data.indexed_iter() {
             if let Some(v) = value {
-                let max = self
-                    .n_levels
-                    .get(k)
-                    .ok_or_else(|| MethylError::InconsistentCategory {
-                        category: k,
-                        message: "category index out of bounds".to_string(),
-                    })?;
+                let max =
+                    self.n_levels
+                        .get(k)
+                        .ok_or_else(|| MethylError::InconsistentCategory {
+                            category: k,
+                            message: "category index out of bounds".to_string(),
+                        })?;
                 if v >= max {
                     return Err(MethylError::InconsistentCategory {
                         category: k,
-                        message: format!(
-                            "value {} at row {} exceeds max level {}",
-                            v, i, max
-                        ),
+                        message: format!("value {} at row {} exceeds max level {}", v, i, max),
                     });
                 }
             }
@@ -96,7 +90,8 @@ impl Dataset {
     /// Create a new dataset with only the given row indices (order preserved).
     pub fn select_rows(&self, indices: &[usize]) -> Result<Dataset, MethylError> {
         let mut ids = Vec::with_capacity(indices.len());
-        let mut data = Array2::<Option<usize>>::from_elem((indices.len(), self.n_categories()), None);
+        let mut data =
+            Array2::<Option<usize>>::from_elem((indices.len(), self.n_categories()), None);
         for (row_idx, &src) in indices.iter().enumerate() {
             let id = self
                 .ids
@@ -104,20 +99,20 @@ impl Dataset {
                 .ok_or_else(|| MethylError::Shape(format!("row {} out of bounds", src)))?;
             ids.push(id.clone());
             for k in 0..self.n_categories() {
-                data[(row_idx, k)] = *self
-                    .data
-                    .get((src, k))
-                    .ok_or_else(|| MethylError::Shape(format!("row {} col {} out of bounds", src, k)))?;
+                data[(row_idx, k)] = *self.data.get((src, k)).ok_or_else(|| {
+                    MethylError::Shape(format!("row {} col {} out of bounds", src, k))
+                })?;
             }
         }
 
         let methylation = if let Some(meth) = &self.methylation {
-            let mut out = Array2::<Option<f64>>::from_elem((indices.len(), self.n_methylation()), None);
+            let mut out =
+                Array2::<Option<f64>>::from_elem((indices.len(), self.n_methylation()), None);
             for (row_idx, &src) in indices.iter().enumerate() {
                 for m in 0..self.n_methylation() {
-                    out[(row_idx, m)] = *meth
-                        .get((src, m))
-                        .ok_or_else(|| MethylError::Shape(format!("row {} meth {} out of bounds", src, m)))?;
+                    out[(row_idx, m)] = *meth.get((src, m)).ok_or_else(|| {
+                        MethylError::Shape(format!("row {} meth {} out of bounds", src, m))
+                    })?;
                 }
             }
             Some(out)
@@ -217,11 +212,7 @@ pub fn load_dataset(
 }
 
 /// Write dataset to TSV/CSV, converting None to "NA".
-pub fn write_dataset(
-    path: &Path,
-    dataset: &Dataset,
-    delimiter: u8,
-) -> Result<(), MethylError> {
+pub fn write_dataset(path: &Path, dataset: &Dataset, delimiter: u8) -> Result<(), MethylError> {
     let mut writer = csv::WriterBuilder::new()
         .delimiter(delimiter)
         .from_path(path)?;

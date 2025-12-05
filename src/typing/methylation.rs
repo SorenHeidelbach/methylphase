@@ -55,8 +55,7 @@ pub fn add_methylation_features(
     values: &HashMap<String, Vec<Option<f64>>>,
     motif_names: &[String],
 ) -> Result<(Dataset, CategoryConfig), MethylError> {
-    let existing: std::collections::HashSet<&String> =
-        dataset.ids.iter().collect();
+    let existing: std::collections::HashSet<&String> = dataset.ids.iter().collect();
     let mut extra_ids: Vec<String> = values
         .keys()
         .filter(|id| !existing.contains(id))
@@ -70,15 +69,13 @@ pub fn add_methylation_features(
     let n_rows = all_ids.len();
     let n_categories = dataset.n_categories();
 
-    let mut data =
-        Array2::<Option<usize>>::from_elem((n_rows, n_categories), None);
+    let mut data = Array2::<Option<usize>>::from_elem((n_rows, n_categories), None);
     // Copy existing categorical observations; extra rows remain None (no hap evidence).
     for ((i, k), v) in dataset.data.indexed_iter() {
         data[(i, k)] = *v;
     }
 
-    let mut methylation =
-        Array2::<Option<f64>>::from_elem((n_rows, motif_names.len()), None);
+    let mut methylation = Array2::<Option<f64>>::from_elem((n_rows, motif_names.len()), None);
 
     for (row, id) in all_ids.iter().enumerate() {
         if let Some(vals) = values.get(id) {
