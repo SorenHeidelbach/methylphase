@@ -7,9 +7,8 @@ title: Home
 
 Welcome to the methylphase docs. 
 
-[!NOTE]
-This documentation is still under development. If any information is missing, unclear or incorrect, please open an issue on the [GitHub repository](https://github.com/SorenHeidelbach/methylphase).
-[/!NOTE]
+> [!NOTE]
+> This documentation is still under development. If any information is missing, unclear or incorrect, please open an issue on the [GitHub repository](https://github.com/SorenHeidelbach/methylphase).
 
 ## Documentation map
 - [Overview](overview.md)
