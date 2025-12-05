@@ -5,7 +5,7 @@ title: Typing utilities
 
 # Typing utilities
 
-`methylphase typing <subcommand>` operates on tabular datasets and configs produced by `phase-variants` or your own pipelines. Core subcommands:
+`methylphase typing <subcommand>` provides subcommands used in phase-variants. These can be used to fit models, impute missing values, convert Floria haplosets, and split FASTQ files by assigned classes. These command are mostly for internal use but may be helpful for users.
 
 ## fit
 Fit a latent class model with a fixed number of classes.

@@ -5,7 +5,7 @@ title: Utility commands
 
 # Utility commands
 
-`methylphase utils <subcommand>` provides supporting tools for inspection and downstream use.
+`methylphase utils <subcommand>` provides supporting tools for inspection and downstream use. These command are mostly for internal use but may be helpful for users.
 
 ## vcf
 Summarize motif methylation to VCF (optionally bgzip+tabix).
